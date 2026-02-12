@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import path from 'path';
 import Stripe from 'stripe';
 import { z } from 'zod';
 import { buildEvidencePayload } from './lib/evidence';
@@ -19,6 +20,8 @@ const stripe = new Stripe(env.STRIPE_SECRET_KEY, {
 });
 
 const app = express();
+
+app.use(express.static(path.join(process.cwd(), 'public')));
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'stripe-dispute-autopilot', ts: new Date().toISOString() });

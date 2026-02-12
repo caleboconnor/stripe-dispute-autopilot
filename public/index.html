@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stripe Dispute Autopilot</title>
+  <style>
+    body { font-family: Inter, system-ui, Arial, sans-serif; margin: 0; background: #0b1020; color: #e6ebff; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .card { background: #121933; border: 1px solid #263059; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+    .btn { background: #4f7cff; border: none; color: white; padding: 10px 14px; border-radius: 10px; cursor: pointer; }
+    .muted { color: #9fb0e3; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #22305e; font-size: 14px; }
+    th { color: #aebfff; font-weight: 600; }
+    .pill { padding: 4px 8px; border-radius: 999px; font-size: 12px; border: 1px solid #3b4d86; }
+    .ok { background: #12331f; border-color: #2b7a49; }
+    .warn { background: #3a2d0f; border-color: #8a6b1f; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Stripe Dispute Autopilot</h1>
+    <p class="muted">MVP ops dashboard for dispute automation</p>
+
+    <div class="card row">
+      <button class="btn" id="refreshBtn">Refresh disputes</button>
+      <span id="health" class="pill warn">Checking health…</span>
+      <span class="muted" id="lastUpdated"></span>
+    </div>
+
+    <div class="card">
+      <h3>Open Disputes</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Reason</th>
+            <th>Status</th>
+            <th>Amount</th>
+            <th>Due By</th>
+            <th>Updated</th>
+            <th>Submitted</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const rows = document.getElementById('rows');
+    const healthEl = document.getElementById('health');
+    const lastUpdated = document.getElementById('lastUpdated');
+
+    const fmtMoney = (amount, currency) => new Intl.NumberFormat(undefined, { style: 'currency', currency: (currency || 'usd').toUpperCase() }).format((amount || 0)/100);
+    const fmtDate = (ts) => ts ? new Date(ts * 1000).toLocaleString() : '—';
+
+    async function loadHealth() {
+      try {
+        const r = await fetch('/health');
+        if (!r.ok) throw new Error('health failed');
+        healthEl.textContent = 'Healthy';
+        healthEl.className = 'pill ok';
+      } catch {
+        healthEl.textContent = 'Unhealthy';
+        healthEl.className = 'pill warn';
+      }
+    }
+
+    async function loadDisputes() {
+      rows.innerHTML = '<tr><td colspan="7" class="muted">Loading…</td></tr>';
+      try {
+        const r = await fetch('/disputes');
+        const data = await r.json();
+        const disputes = data.disputes || [];
+        if (!disputes.length) {
+          rows.innerHTML = '<tr><td colspan="7" class="muted">No disputes yet. Trigger Stripe webhook events to populate.</td></tr>';
+        } else {
+          rows.innerHTML = disputes.map(d => `
+            <tr>
+              <td>${d.id}</td>
+              <td>${d.reason}</td>
+              <td>${d.status}</td>
+              <td>${fmtMoney(d.amount, d.currency)}</td>
+              <td>${fmtDate(d.dueBy)}</td>
+              <td>${new Date(d.updatedAt).toLocaleString()}</td>
+              <td>${d.submitted ? 'Yes' : 'No'}</td>
+            </tr>
+          `).join('');
+        }
+        lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+      } catch (e) {
+        rows.innerHTML = `<tr><td colspan="7" class="muted">Failed to load disputes.</td></tr>`;
+      }
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', async () => {
+      await loadHealth();
+      await loadDisputes();
+    });
+
+    loadHealth();
+    loadDisputes();
+  </script>
+</body>
+</html>
