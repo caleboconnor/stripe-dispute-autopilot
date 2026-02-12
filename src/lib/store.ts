@@ -3,9 +3,20 @@ import path from 'path';
 
 export type MerchantSettings = {
   autoSubmitEnabled: boolean;
-  autoSubmitReasons: string[]; // empty means all reasons
-  minEvidenceScore: number; // 0-100
-  manualReviewAmountThreshold: number; // cents
+  autoSubmitReasons: string[];
+  minEvidenceScore: number;
+  manualReviewAmountThreshold: number;
+};
+
+export type EvidenceProfile = {
+  businessType: 'info_coaching' | 'generic';
+  productDescriptionTemplate: string;
+  termsUrl?: string;
+  refundPolicyUrl?: string;
+  cancellationPolicyUrl?: string;
+  onboardingProofTemplate?: string;
+  deliveryProofTemplate?: string;
+  supportPolicyTemplate?: string;
 };
 
 export type MerchantRecord = {
@@ -15,6 +26,7 @@ export type MerchantRecord = {
   stripeAccessToken: string;
   createdAt: string;
   settings: MerchantSettings;
+  evidenceProfile: EvidenceProfile;
 };
 
 export type SubmissionAttempt = {
@@ -72,7 +84,24 @@ export function defaultMerchantSettings(): MerchantSettings {
     autoSubmitEnabled: false,
     autoSubmitReasons: [],
     minEvidenceScore: 70,
-    manualReviewAmountThreshold: 200000, // $2k
+    manualReviewAmountThreshold: 200000,
+  };
+}
+
+export function defaultEvidenceProfile(): EvidenceProfile {
+  return {
+    businessType: 'info_coaching',
+    productDescriptionTemplate:
+      'Customer purchased access to a structured coaching/info program including onboarding assets, training modules, and support.',
+    termsUrl: '',
+    refundPolicyUrl: '',
+    cancellationPolicyUrl: '',
+    onboardingProofTemplate:
+      'Customer onboarding completed with timestamped confirmation and onboarding communications.',
+    deliveryProofTemplate:
+      'Customer received program access credentials and digital delivery confirmation.',
+    supportPolicyTemplate:
+      'Customer support channels and response logs are maintained and available as evidence.',
   };
 }
 
@@ -89,6 +118,15 @@ export function updateMerchantSettings(merchantId: string, patch: Partial<Mercha
   const idx = db.merchants.findIndex((m) => m.id === merchantId);
   if (idx < 0) return undefined;
   db.merchants[idx].settings = { ...db.merchants[idx].settings, ...patch };
+  writeDb(db);
+  return db.merchants[idx];
+}
+
+export function updateMerchantEvidenceProfile(merchantId: string, patch: Partial<EvidenceProfile>) {
+  const db = readDb();
+  const idx = db.merchants.findIndex((m) => m.id === merchantId);
+  if (idx < 0) return undefined;
+  db.merchants[idx].evidenceProfile = { ...db.merchants[idx].evidenceProfile, ...patch };
   writeDb(db);
   return db.merchants[idx];
 }
@@ -154,9 +192,7 @@ export function getMetrics(merchantId?: string) {
   const won = disputes.filter((d) => d.status === 'won').length;
   const lost = disputes.filter((d) => d.status === 'lost').length;
   const submitted = disputes.filter((d) => d.submitted).length;
-  const recoveredAmount = disputes
-    .filter((d) => d.status === 'won')
-    .reduce((sum, d) => sum + (d.amount || 0), 0);
+  const recoveredAmount = disputes.filter((d) => d.status === 'won').reduce((sum, d) => sum + (d.amount || 0), 0);
   const avgEvidenceScore = total ? Math.round(disputes.reduce((sum, d) => sum + (d.evidenceScore || 0), 0) / total) : 0;
 
   const byReason: Record<string, { total: number; won: number; lost: number }> = {};

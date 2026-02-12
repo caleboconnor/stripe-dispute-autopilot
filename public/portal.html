@@ -48,6 +48,24 @@
       <input id="autoSubmitReasons" placeholder="Reason codes (comma separated)" style="min-width:320px;" />
       <button id="saveSettingsBtn">Save settings</button>
     </div>
+    <hr style="border-color:#25325f; margin:14px 0;" />
+    <h4>Evidence Profile (Info Product / Coaching)</h4>
+    <div class="row">
+      <input id="termsUrl" placeholder="Terms URL" style="min-width:260px;" />
+      <input id="refundPolicyUrl" placeholder="Refund policy URL" style="min-width:260px;" />
+      <input id="cancellationPolicyUrl" placeholder="Cancellation policy URL" style="min-width:260px;" />
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <input id="productDescriptionTemplate" placeholder="Product description template" style="min-width:520px;" />
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <input id="onboardingProofTemplate" placeholder="Onboarding proof template" style="min-width:520px;" />
+      <input id="deliveryProofTemplate" placeholder="Delivery proof template" style="min-width:520px;" />
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <input id="supportPolicyTemplate" placeholder="Support policy template" style="min-width:520px;" />
+      <button id="saveEvidenceBtn">Save evidence profile</button>
+    </div>
   </div>
 
   <div class="card">
@@ -93,10 +111,19 @@ async function loadMerchants() {
 
 function hydrateSettings() {
   const s = selectedMerchant?.settings;
+  const e = selectedMerchant?.evidenceProfile || {};
   document.getElementById('autoSubmitEnabled').checked = !!s?.autoSubmitEnabled;
   document.getElementById('minEvidenceScore').value = s?.minEvidenceScore ?? 70;
   document.getElementById('manualReviewThreshold').value = s?.manualReviewAmountThreshold ?? 200000;
   document.getElementById('autoSubmitReasons').value = (s?.autoSubmitReasons || []).join(',');
+
+  document.getElementById('termsUrl').value = e.termsUrl || '';
+  document.getElementById('refundPolicyUrl').value = e.refundPolicyUrl || '';
+  document.getElementById('cancellationPolicyUrl').value = e.cancellationPolicyUrl || '';
+  document.getElementById('productDescriptionTemplate').value = e.productDescriptionTemplate || '';
+  document.getElementById('onboardingProofTemplate').value = e.onboardingProofTemplate || '';
+  document.getElementById('deliveryProofTemplate').value = e.deliveryProofTemplate || '';
+  document.getElementById('supportPolicyTemplate').value = e.supportPolicyTemplate || '';
 }
 
 async function loadMetrics() {
@@ -178,6 +205,28 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
   await loadDisputes();
   await loadMetrics();
   alert('Settings saved.');
+});
+
+document.getElementById('saveEvidenceBtn').addEventListener('click', async () => {
+  if (!merchantFilter.value) return alert('Select a merchant first.');
+  const payload = {
+    termsUrl: document.getElementById('termsUrl').value,
+    refundPolicyUrl: document.getElementById('refundPolicyUrl').value,
+    cancellationPolicyUrl: document.getElementById('cancellationPolicyUrl').value,
+    productDescriptionTemplate: document.getElementById('productDescriptionTemplate').value,
+    onboardingProofTemplate: document.getElementById('onboardingProofTemplate').value,
+    deliveryProofTemplate: document.getElementById('deliveryProofTemplate').value,
+    supportPolicyTemplate: document.getElementById('supportPolicyTemplate').value,
+    businessType: 'info_coaching'
+  };
+  const r = await fetch('/api/merchants/' + encodeURIComponent(merchantFilter.value) + '/evidence-profile', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!r.ok) return alert('Failed to save evidence profile.');
+  await loadMerchants();
+  alert('Evidence profile saved.');
 });
 
 merchantFilter.addEventListener('change', async () => {

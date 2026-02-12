@@ -14,9 +14,11 @@ import {
   listDisputes,
   listMerchants,
   markSubmitted,
+  updateMerchantEvidenceProfile,
   updateMerchantSettings,
   upsertDispute,
   upsertMerchant,
+  defaultEvidenceProfile,
 } from './lib/store';
 
 const env = z
@@ -47,6 +49,12 @@ app.get('/api/merchants', (_req, res) => {
 
 app.patch('/api/merchants/:merchantId/settings', (req, res) => {
   const updated = updateMerchantSettings(req.params.merchantId, req.body || {});
+  if (!updated) return res.status(404).json({ error: 'merchant_not_found' });
+  return res.json({ merchant: updated });
+});
+
+app.patch('/api/merchants/:merchantId/evidence-profile', (req, res) => {
+  const updated = updateMerchantEvidenceProfile(req.params.merchantId, req.body || {});
   if (!updated) return res.status(404).json({ error: 'merchant_not_found' });
   return res.json({ merchant: updated });
 });
@@ -129,6 +137,7 @@ app.get('/auth/stripe/callback', async (req, res) => {
       stripeAccessToken: tokenResp.access_token || '',
       createdAt: new Date().toISOString(),
       settings: defaultMerchantSettings(),
+      evidenceProfile: defaultEvidenceProfile(),
     });
 
     return res.redirect('/portal.html?connected=1');
@@ -168,16 +177,17 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
         customerName = charge.billing_details?.name || '';
       }
 
+      const profile = merchant?.evidenceProfile || defaultEvidenceProfile();
       const built = buildEvidencePackage({
         dispute,
         customerEmail,
         customerName,
-        productDescription: 'Product/service fulfilled per agreed purchase terms.',
-        termsUrl: 'https://example.com/terms',
-        refundPolicyUrl: 'https://example.com/refund-policy',
-        cancellationPolicyUrl: 'https://example.com/cancellation-policy',
-        accessLog: 'Delivery/access logs retained and available.',
-        supportInteraction: 'Support and customer communication logs retained.',
+        productDescription: profile.productDescriptionTemplate,
+        termsUrl: profile.termsUrl,
+        refundPolicyUrl: profile.refundPolicyUrl,
+        cancellationPolicyUrl: profile.cancellationPolicyUrl,
+        accessLog: profile.deliveryProofTemplate,
+        supportInteraction: `${profile.supportPolicyTemplate || ''}\n${profile.onboardingProofTemplate || ''}`.trim(),
       });
 
       const settings = merchant?.settings || defaultMerchantSettings();
