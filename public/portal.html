@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Merchant Portal - Dispute Autopilot</title>
+  <style>
+    body { font-family: Inter, system-ui, Arial, sans-serif; margin: 0; background: #0b1020; color: #e6ebff; }
+    .wrap { max-width: 1160px; margin: 0 auto; padding: 24px; }
+    .card { background: #121933; border: 1px solid #263059; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    input, select { background: #0d1430; color: #e6ebff; border: 1px solid #2f3a69; border-radius: 8px; padding: 10px; }
+    button { background: #4f7cff; border: none; color: white; padding: 10px 14px; border-radius: 10px; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #22305e; font-size: 14px; }
+    th { color: #aebfff; }
+    .muted { color: #95a8de; }
+    .ok { color: #7ce38b; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Merchant Portal</h1>
+  <p class="muted">Connect Stripe, monitor disputes, and track recovery automation.</p>
+
+  <div class="card">
+    <h3>Connect a Stripe Account</h3>
+    <div class="row">
+      <input id="merchantName" placeholder="Merchant name" />
+      <button id="connectBtn">Connect Stripe</button>
+      <span id="connectState" class="muted"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Merchants</h3>
+    <div class="row">
+      <select id="merchantFilter">
+        <option value="">All merchants</option>
+      </select>
+      <button id="refreshBtn">Refresh</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Disputes</h3>
+    <table>
+      <thead>
+      <tr>
+        <th>ID</th><th>Merchant</th><th>Reason</th><th>Status</th><th>Amount</th><th>Due By</th><th>Updated</th><th>Submitted</th>
+      </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const merchantFilter = document.getElementById('merchantFilter');
+const rows = document.getElementById('rows');
+const connectState = document.getElementById('connectState');
+let merchants = [];
+
+const fmtMoney = (amount, currency) => new Intl.NumberFormat(undefined, { style: 'currency', currency: (currency || 'usd').toUpperCase() }).format((amount || 0)/100);
+const fmtDate = (ts) => ts ? new Date(ts * 1000).toLocaleString() : '—';
+
+async function loadMerchants() {
+  const r = await fetch('/api/merchants');
+  const data = await r.json();
+  merchants = data.merchants || [];
+  merchantFilter.innerHTML = '<option value="">All merchants</option>' + merchants.map(m => `<option value="${m.id}">${m.name} (${m.stripeAccountId})</option>`).join('');
+}
+
+function merchantNameById(id) {
+  const m = merchants.find(x => x.id === id);
+  return m ? m.name : (id || '—');
+}
+
+async function loadDisputes() {
+  const q = merchantFilter.value ? `?merchantId=${encodeURIComponent(merchantFilter.value)}` : '';
+  const r = await fetch('/disputes' + q);
+  const data = await r.json();
+  const disputes = data.disputes || [];
+  if (!disputes.length) {
+    rows.innerHTML = `<tr><td colspan="8" class="muted">No disputes yet.</td></tr>`;
+    return;
+  }
+  rows.innerHTML = disputes.map(d => `
+      <tr>
+        <td>${d.id}</td>
+        <td>${merchantNameById(d.merchantId)}</td>
+        <td>${d.reason}</td>
+        <td>${d.status}</td>
+        <td>${fmtMoney(d.amount, d.currency)}</td>
+        <td>${fmtDate(d.dueBy)}</td>
+        <td>${new Date(d.updatedAt).toLocaleString()}</td>
+        <td>${d.submitted ? 'Yes' : 'No'}</td>
+      </tr>
+  `).join('');
+}
+
+document.getElementById('connectBtn').addEventListener('click', () => {
+  const name = document.getElementById('merchantName').value || 'Merchant';
+  window.location.href = '/auth/stripe/start?merchantName=' + encodeURIComponent(name);
+});
+
+document.getElementById('refreshBtn').addEventListener('click', async () => {
+  await loadMerchants();
+  await loadDisputes();
+});
+
+merchantFilter.addEventListener('change', loadDisputes);
+
+if (new URLSearchParams(location.search).get('connected') === '1') {
+  connectState.textContent = 'Stripe account connected.';
+  connectState.className = 'ok';
+}
+
+loadMerchants().then(loadDisputes);
+</script>
+</body>
+</html>
