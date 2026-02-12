@@ -19,8 +19,48 @@ export type EvidenceInput = {
   shippingDate?: string;
 };
 
-export function buildEvidencePayload(input: EvidenceInput): Stripe.DisputeUpdateParams {
+export type BuiltEvidence = {
+  payload: Stripe.DisputeUpdateParams;
+  score: number;
+  summary: string[];
+};
+
+function scoreEvidence(i: EvidenceInput, summary: string[]): number {
+  let score = 0;
+  if (i.customerName) score += 10;
+  if (i.customerEmail) score += 10;
+  if (i.productDescription) score += 15;
+  if (i.supportInteraction) score += 15;
+  if (i.termsUrl) score += 10;
+  if (i.refundPolicyUrl) score += 10;
+  if (i.cancellationPolicyUrl) score += 10;
+  if (i.accessLog) score += 10;
+  if (i.shippingTrackingNumber) score += 10;
+
+  summary.push(`Evidence score: ${Math.min(100, score)}/100`);
+  return Math.min(100, score);
+}
+
+function reasonSpecificSummary(reason: string): string[] {
+  switch (reason) {
+    case 'fraudulent':
+      return ['Applied fraud playbook: customer identity + transaction legitimacy evidence.'];
+    case 'product_not_received':
+      return ['Applied delivery playbook: shipment + delivery proof focus.'];
+    case 'product_unacceptable':
+      return ['Applied product-quality playbook: product description + support history focus.'];
+    case 'subscription_canceled':
+      return ['Applied subscription playbook: cancellation/refund policy + service timeline focus.'];
+    case 'duplicate':
+      return ['Applied duplicate-charge playbook: single-charge validation and transaction mapping.'];
+    default:
+      return ['Applied general playbook: complete transaction and policy evidence pack.'];
+  }
+}
+
+export function buildEvidencePackage(input: EvidenceInput): BuiltEvidence {
   const reason = input.dispute.reason;
+  const summary: string[] = [...reasonSpecificSummary(reason)];
 
   const base: Stripe.DisputeUpdateParams = {
     evidence: {
@@ -64,5 +104,6 @@ export function buildEvidencePayload(input: EvidenceInput): Stripe.DisputeUpdate
     };
   }
 
-  return base;
+  const score = scoreEvidence(input, summary);
+  return { payload: base, score, summary };
 }

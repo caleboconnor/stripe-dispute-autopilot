@@ -6,25 +6,28 @@
   <title>Merchant Portal - Dispute Autopilot</title>
   <style>
     body { font-family: Inter, system-ui, Arial, sans-serif; margin: 0; background: #0b1020; color: #e6ebff; }
-    .wrap { max-width: 1160px; margin: 0 auto; padding: 24px; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
     .card { background: #121933; border: 1px solid #263059; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
     .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 10px; }
     input, select { background: #0d1430; color: #e6ebff; border: 1px solid #2f3a69; border-radius: 8px; padding: 10px; }
-    button { background: #4f7cff; border: none; color: white; padding: 10px 14px; border-radius: 10px; cursor: pointer; }
+    button { background: #4f7cff; border: none; color: white; padding: 8px 12px; border-radius: 10px; cursor: pointer; }
     table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #22305e; font-size: 14px; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #22305e; font-size: 13px; }
     th { color: #aebfff; }
     .muted { color: #95a8de; }
     .ok { color: #7ce38b; }
+    .kpi { background:#0d1430; border:1px solid #2b396f; border-radius:10px; padding:10px; }
+    .kpi .v { font-size:20px; font-weight:700; }
   </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Merchant Portal</h1>
-  <p class="muted">Connect Stripe, monitor disputes, and track recovery automation.</p>
+  <p class="muted">Connect Stripe, monitor disputes, tune automation, and retry submissions.</p>
 
   <div class="card">
-    <h3>Connect a Stripe Account</h3>
+    <h3>Connect Stripe</h3>
     <div class="row">
       <input id="merchantName" placeholder="Merchant name" />
       <button id="connectBtn">Connect Stripe</button>
@@ -33,13 +36,23 @@
   </div>
 
   <div class="card">
-    <h3>Merchants</h3>
+    <h3>Merchant + Settings</h3>
     <div class="row">
-      <select id="merchantFilter">
-        <option value="">All merchants</option>
-      </select>
+      <select id="merchantFilter"><option value="">Select merchant</option></select>
       <button id="refreshBtn">Refresh</button>
     </div>
+    <div class="row" style="margin-top:10px;">
+      <label><input type="checkbox" id="autoSubmitEnabled" /> Auto-submit enabled</label>
+      <input id="minEvidenceScore" type="number" min="0" max="100" placeholder="Min score" />
+      <input id="manualReviewThreshold" type="number" min="0" placeholder="Manual review threshold (cents)" />
+      <input id="autoSubmitReasons" placeholder="Reason codes (comma separated)" style="min-width:320px;" />
+      <button id="saveSettingsBtn">Save settings</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>KPIs</h3>
+    <div class="grid" id="kpis"></div>
   </div>
 
   <div class="card">
@@ -47,7 +60,7 @@
     <table>
       <thead>
       <tr>
-        <th>ID</th><th>Merchant</th><th>Reason</th><th>Status</th><th>Amount</th><th>Due By</th><th>Updated</th><th>Submitted</th>
+        <th>ID</th><th>Reason</th><th>Status</th><th>Amount</th><th>Score</th><th>Review?</th><th>Due</th><th>Submitted</th><th>Action</th>
       </tr>
       </thead>
       <tbody id="rows"></tbody>
@@ -59,64 +72,136 @@
 const merchantFilter = document.getElementById('merchantFilter');
 const rows = document.getElementById('rows');
 const connectState = document.getElementById('connectState');
-let merchants = [];
+const kpisEl = document.getElementById('kpis');
 
-const fmtMoney = (amount, currency) => new Intl.NumberFormat(undefined, { style: 'currency', currency: (currency || 'usd').toUpperCase() }).format((amount || 0)/100);
+let merchants = [];
+let selectedMerchant = null;
+
+const fmtMoney = (amount, currency='usd') => new Intl.NumberFormat(undefined, { style: 'currency', currency: (currency || 'usd').toUpperCase() }).format((amount || 0)/100);
 const fmtDate = (ts) => ts ? new Date(ts * 1000).toLocaleString() : '—';
 
 async function loadMerchants() {
   const r = await fetch('/api/merchants');
   const data = await r.json();
   merchants = data.merchants || [];
-  merchantFilter.innerHTML = '<option value="">All merchants</option>' + merchants.map(m => `<option value="${m.id}">${m.name} (${m.stripeAccountId})</option>`).join('');
+  merchantFilter.innerHTML = '<option value="">Select merchant</option>' + merchants.map(m => `<option value="${m.id}">${m.name} (${m.stripeAccountId})</option>`).join('');
+  const prev = selectedMerchant?.id;
+  if (prev) merchantFilter.value = prev;
+  selectedMerchant = merchants.find(m => m.id === merchantFilter.value) || null;
+  hydrateSettings();
 }
 
-function merchantNameById(id) {
-  const m = merchants.find(x => x.id === id);
-  return m ? m.name : (id || '—');
+function hydrateSettings() {
+  const s = selectedMerchant?.settings;
+  document.getElementById('autoSubmitEnabled').checked = !!s?.autoSubmitEnabled;
+  document.getElementById('minEvidenceScore').value = s?.minEvidenceScore ?? 70;
+  document.getElementById('manualReviewThreshold').value = s?.manualReviewAmountThreshold ?? 200000;
+  document.getElementById('autoSubmitReasons').value = (s?.autoSubmitReasons || []).join(',');
+}
+
+async function loadMetrics() {
+  if (!merchantFilter.value) {
+    kpisEl.innerHTML = '<div class="muted">Select a merchant to view KPIs.</div>';
+    return;
+  }
+  const r = await fetch('/metrics?merchantId=' + encodeURIComponent(merchantFilter.value));
+  const data = await r.json();
+  const m = data.metrics || {};
+  kpisEl.innerHTML = `
+    <div class="kpi"><div class="muted">Total Disputes</div><div class="v">${m.total || 0}</div></div>
+    <div class="kpi"><div class="muted">Win Rate</div><div class="v">${m.winRate || 0}%</div></div>
+    <div class="kpi"><div class="muted">Recovered</div><div class="v">${fmtMoney(m.recoveredAmount || 0)}</div></div>
+    <div class="kpi"><div class="muted">Avg Evidence Score</div><div class="v">${m.avgEvidenceScore || 0}</div></div>
+  `;
 }
 
 async function loadDisputes() {
-  const q = merchantFilter.value ? `?merchantId=${encodeURIComponent(merchantFilter.value)}` : '';
-  const r = await fetch('/disputes' + q);
+  if (!merchantFilter.value) {
+    rows.innerHTML = `<tr><td colspan="9" class="muted">Select a merchant.</td></tr>`;
+    return;
+  }
+  const r = await fetch('/disputes?merchantId=' + encodeURIComponent(merchantFilter.value));
   const data = await r.json();
   const disputes = data.disputes || [];
   if (!disputes.length) {
-    rows.innerHTML = `<tr><td colspan="8" class="muted">No disputes yet.</td></tr>`;
+    rows.innerHTML = `<tr><td colspan="9" class="muted">No disputes yet.</td></tr>`;
     return;
   }
   rows.innerHTML = disputes.map(d => `
       <tr>
         <td>${d.id}</td>
-        <td>${merchantNameById(d.merchantId)}</td>
         <td>${d.reason}</td>
         <td>${d.status}</td>
         <td>${fmtMoney(d.amount, d.currency)}</td>
+        <td>${d.evidenceScore || 0}</td>
+        <td>${d.manualReviewRequired ? 'Yes' : 'No'}</td>
         <td>${fmtDate(d.dueBy)}</td>
-        <td>${new Date(d.updatedAt).toLocaleString()}</td>
         <td>${d.submitted ? 'Yes' : 'No'}</td>
+        <td><button onclick="retrySubmit('${d.id}')">Retry Submit</button></td>
       </tr>
   `).join('');
 }
+
+async function retrySubmit(id) {
+  const r = await fetch('/disputes/' + encodeURIComponent(id) + '/retry-submit', { method: 'POST' });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    alert('Retry failed: ' + (j.message || 'Unknown error'));
+  } else {
+    alert('Retry submitted.');
+  }
+  await loadDisputes();
+  await loadMetrics();
+}
+window.retrySubmit = retrySubmit;
 
 document.getElementById('connectBtn').addEventListener('click', () => {
   const name = document.getElementById('merchantName').value || 'Merchant';
   window.location.href = '/auth/stripe/start?merchantName=' + encodeURIComponent(name);
 });
 
+document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
+  if (!merchantFilter.value) return alert('Select a merchant first.');
+  const payload = {
+    autoSubmitEnabled: document.getElementById('autoSubmitEnabled').checked,
+    minEvidenceScore: Number(document.getElementById('minEvidenceScore').value || 70),
+    manualReviewAmountThreshold: Number(document.getElementById('manualReviewThreshold').value || 200000),
+    autoSubmitReasons: (document.getElementById('autoSubmitReasons').value || '').split(',').map(x => x.trim()).filter(Boolean)
+  };
+  const r = await fetch('/api/merchants/' + encodeURIComponent(merchantFilter.value) + '/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!r.ok) return alert('Failed to save settings.');
+  await loadMerchants();
+  await loadDisputes();
+  await loadMetrics();
+  alert('Settings saved.');
+});
+
+merchantFilter.addEventListener('change', async () => {
+  selectedMerchant = merchants.find(m => m.id === merchantFilter.value) || null;
+  hydrateSettings();
+  await loadDisputes();
+  await loadMetrics();
+});
+
 document.getElementById('refreshBtn').addEventListener('click', async () => {
   await loadMerchants();
   await loadDisputes();
+  await loadMetrics();
 });
-
-merchantFilter.addEventListener('change', loadDisputes);
 
 if (new URLSearchParams(location.search).get('connected') === '1') {
   connectState.textContent = 'Stripe account connected.';
   connectState.className = 'ok';
 }
 
-loadMerchants().then(loadDisputes);
+loadMerchants().then(async () => {
+  await loadDisputes();
+  await loadMetrics();
+});
 </script>
 </body>
 </html>
