@@ -74,7 +74,22 @@
   </div>
 
   <div class="card">
+    <h3>AI Recommendations</h3>
+    <ul id="recs" class="muted"></ul>
+  </div>
+
+  <div class="card">
     <h3>Disputes</h3>
+    <div class="row" style="margin-bottom:10px;">
+      <select id="statusFilter">
+        <option value="">All statuses</option>
+        <option value="warning_needs_response">Needs response</option>
+        <option value="warning_under_review">Under review</option>
+        <option value="won">Won</option>
+        <option value="lost">Lost</option>
+      </select>
+      <input id="reasonFilter" placeholder="Filter by reason code" />
+    </div>
     <table>
       <thead>
       <tr>
@@ -91,8 +106,12 @@ const merchantFilter = document.getElementById('merchantFilter');
 const rows = document.getElementById('rows');
 const connectState = document.getElementById('connectState');
 const kpisEl = document.getElementById('kpis');
+const recsEl = document.getElementById('recs');
+const statusFilter = document.getElementById('statusFilter');
+const reasonFilter = document.getElementById('reasonFilter');
 
 let merchants = [];
+let cachedDisputes = [];
 let selectedMerchant = null;
 
 const fmtMoney = (amount, currency='usd') => new Intl.NumberFormat(undefined, { style: 'currency', currency: (currency || 'usd').toUpperCase() }).format((amount || 0)/100);
@@ -142,21 +161,25 @@ async function loadMetrics() {
   `;
 }
 
-async function loadDisputes() {
+async function loadRecommendations() {
   if (!merchantFilter.value) {
-    rows.innerHTML = `<tr><td colspan="9" class="muted">Select a merchant.</td></tr>`;
+    recsEl.innerHTML = '<li>Select a merchant to view recommendations.</li>';
     return;
   }
-  const r = await fetch('/disputes?merchantId=' + encodeURIComponent(merchantFilter.value));
+  const r = await fetch('/recommendations?merchantId=' + encodeURIComponent(merchantFilter.value));
   const data = await r.json();
-  const disputes = data.disputes || [];
+  const recs = data.recommendations || [];
+  recsEl.innerHTML = recs.map(x => `<li>${x}</li>`).join('');
+}
+
+function renderDisputes(disputes) {
   if (!disputes.length) {
-    rows.innerHTML = `<tr><td colspan="9" class="muted">No disputes yet.</td></tr>`;
+    rows.innerHTML = `<tr><td colspan="9" class="muted">No disputes match current filters.</td></tr>`;
     return;
   }
   rows.innerHTML = disputes.map(d => `
       <tr>
-        <td>${d.id}</td>
+        <td title="${(d.evidenceSummary||[]).join(' | ')}">${d.id}</td>
         <td>${d.reason}</td>
         <td>${d.status}</td>
         <td>${fmtMoney(d.amount, d.currency)}</td>
@@ -169,6 +192,29 @@ async function loadDisputes() {
   `).join('');
 }
 
+function applyDisputeFilters() {
+  const status = statusFilter.value;
+  const reason = (reasonFilter.value || '').trim().toLowerCase();
+  const filtered = cachedDisputes.filter(d => {
+    if (status && d.status !== status) return false;
+    if (reason && !(d.reason || '').toLowerCase().includes(reason)) return false;
+    return true;
+  });
+  renderDisputes(filtered);
+}
+
+async function loadDisputes() {
+  if (!merchantFilter.value) {
+    cachedDisputes = [];
+    rows.innerHTML = `<tr><td colspan="9" class="muted">Select a merchant.</td></tr>`;
+    return;
+  }
+  const r = await fetch('/disputes?merchantId=' + encodeURIComponent(merchantFilter.value));
+  const data = await r.json();
+  cachedDisputes = data.disputes || [];
+  applyDisputeFilters();
+}
+
 async function retrySubmit(id) {
   const r = await fetch('/disputes/' + encodeURIComponent(id) + '/retry-submit', { method: 'POST' });
   if (!r.ok) {
@@ -179,6 +225,7 @@ async function retrySubmit(id) {
   }
   await loadDisputes();
   await loadMetrics();
+  await loadRecommendations();
 }
 window.retrySubmit = retrySubmit;
 
@@ -204,6 +251,7 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
   await loadMerchants();
   await loadDisputes();
   await loadMetrics();
+  await loadRecommendations();
   alert('Settings saved.');
 });
 
@@ -234,13 +282,18 @@ merchantFilter.addEventListener('change', async () => {
   hydrateSettings();
   await loadDisputes();
   await loadMetrics();
+  await loadRecommendations();
 });
 
 document.getElementById('refreshBtn').addEventListener('click', async () => {
   await loadMerchants();
   await loadDisputes();
   await loadMetrics();
+  await loadRecommendations();
 });
+
+statusFilter.addEventListener('change', applyDisputeFilters);
+reasonFilter.addEventListener('input', applyDisputeFilters);
 
 if (new URLSearchParams(location.search).get('connected') === '1') {
   connectState.textContent = 'Stripe account connected.';
@@ -250,6 +303,7 @@ if (new URLSearchParams(location.search).get('connected') === '1') {
 loadMerchants().then(async () => {
   await loadDisputes();
   await loadMetrics();
+  await loadRecommendations();
 });
 </script>
 </body>

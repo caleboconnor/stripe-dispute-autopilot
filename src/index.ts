@@ -75,6 +75,33 @@ app.get('/metrics', (req, res) => {
   return res.json({ metrics: getMetrics(merchantId) });
 });
 
+app.get('/recommendations', (req, res) => {
+  const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
+  const metrics = getMetrics(merchantId);
+  const disputes = listDisputes(merchantId);
+  const recommendations: string[] = [];
+
+  if (metrics.avgEvidenceScore < 75) {
+    recommendations.push('Increase evidence quality: add stronger onboarding, delivery, and support proofs in Evidence Profile.');
+  }
+  if (metrics.winRate < 40 && metrics.total >= 5) {
+    recommendations.push('Win rate is low: tighten reason-code playbooks and raise minimum evidence score before auto-submit.');
+  }
+  const reviewQueue = disputes.filter((d) => d.manualReviewRequired && !d.submitted).length;
+  if (reviewQueue > 0) {
+    recommendations.push(`${reviewQueue} high-value disputes need manual review; process these first to avoid deadline misses.`);
+  }
+  const dueSoon = disputes.filter((d) => d.dueBy && d.dueBy * 1000 - Date.now() < 48 * 60 * 60 * 1000).length;
+  if (dueSoon > 0) {
+    recommendations.push(`${dueSoon} disputes are due in <48h. Prioritize submissions or enable stricter auto-submit for safe reason codes.`);
+  }
+  if (!recommendations.length) {
+    recommendations.push('System looks healthy. Next step: connect real fulfillment/support data sources to further improve win rates.');
+  }
+
+  return res.json({ recommendations });
+});
+
 // Manual retry endpoint
 app.post('/disputes/:id/retry-submit', async (req, res) => {
   const dispute = getDispute(req.params.id);
