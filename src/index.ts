@@ -28,6 +28,8 @@ const env = z
     STRIPE_SECRET_KEY: z.string().min(1),
     STRIPE_WEBHOOK_SECRET: z.string().min(1),
     STRIPE_CLIENT_ID: z.string().optional(),
+    AUTO_RETRY_ENABLED: z.string().optional(),
+    AUTO_RETRY_INTERVAL_MS: z.string().default('60000'),
   })
   .parse(process.env);
 
@@ -103,33 +105,20 @@ app.get('/recommendations', (req, res) => {
 });
 
 // Manual retry endpoint
+app.post('/jobs/run-submissions', async (_req, res) => {
+  await runAutoRetrySweep();
+  return res.json({ ok: true });
+});
+
 app.post('/disputes/:id/retry-submit', async (req, res) => {
   const dispute = getDispute(req.params.id);
   if (!dispute) return res.status(404).json({ error: 'dispute_not_found' });
 
-  const merchant = findMerchantById(dispute.merchantId);
-  const stripe = merchant ? new Stripe(merchant.stripeAccessToken, { apiVersion: '2025-08-27.basil' }) : platformStripe;
-
-  try {
-    const payload: Stripe.DisputeUpdateParams = {
-      evidence: {
-        uncategorized_text: `Retry submission from portal at ${new Date().toISOString()}`,
-      },
-      submit: true,
-    };
-    await stripe.disputes.update(dispute.id, payload);
-    markSubmitted(dispute.id);
-    addSubmissionAttempt(dispute.id, {
-      at: new Date().toISOString(),
-      success: true,
-      message: 'Manual retry submission successful.',
-    });
-    return res.json({ ok: true });
-  } catch (err) {
-    const msg = (err as Error).message;
-    addSubmissionAttempt(dispute.id, { at: new Date().toISOString(), success: false, message: msg });
-    return res.status(500).json({ error: 'submit_failed', message: msg });
+  const out = await attemptSubmit(dispute.id);
+  if (!out.ok && out.message !== 'already_submitted') {
+    return res.status(500).json({ error: 'submit_failed', message: out.message });
   }
+  return res.json({ ok: true, message: out.message });
 });
 
 // Start Stripe OAuth (Connect)
@@ -173,6 +162,58 @@ app.get('/auth/stripe/callback', async (req, res) => {
     return res.status(500).send('OAuth exchange failed');
   }
 });
+
+
+
+async function attemptSubmit(disputeId: string) {
+  const dispute = getDispute(disputeId);
+  if (!dispute) return { ok: false, message: 'dispute_not_found' };
+
+  const merchant = findMerchantById(dispute.merchantId);
+  const settings = merchant?.settings || defaultMerchantSettings();
+  const reasonAllowed = settings.autoSubmitReasons.length
+    ? settings.autoSubmitReasons.includes(dispute.reason)
+    : true;
+
+  if (!settings.autoSubmitEnabled) return { ok: false, message: 'auto_submit_disabled' };
+  if (!reasonAllowed) return { ok: false, message: 'reason_not_allowed' };
+  if (dispute.manualReviewRequired) return { ok: false, message: 'manual_review_required' };
+  if ((dispute.evidenceScore || 0) < settings.minEvidenceScore) return { ok: false, message: 'score_below_threshold' };
+  if (dispute.submitted) return { ok: false, message: 'already_submitted' };
+
+  const stripe = merchant
+    ? new Stripe(merchant.stripeAccessToken, { apiVersion: '2025-08-27.basil' })
+    : platformStripe;
+
+  try {
+    const payload: Stripe.DisputeUpdateParams = {
+      evidence: {
+        uncategorized_text: `Auto retry submit at ${new Date().toISOString()}`,
+      },
+      submit: true,
+    };
+    await stripe.disputes.update(dispute.id, payload);
+    markSubmitted(dispute.id);
+    addSubmissionAttempt(dispute.id, {
+      at: new Date().toISOString(),
+      success: true,
+      message: 'Auto retry submission successful.',
+    });
+    return { ok: true, message: 'submitted' };
+  } catch (err) {
+    const msg = (err as Error).message;
+    addSubmissionAttempt(dispute.id, { at: new Date().toISOString(), success: false, message: msg });
+    return { ok: false, message: msg };
+  }
+}
+
+async function runAutoRetrySweep() {
+  const all = listDisputes();
+  const pending = all.filter((d) => !d.submitted && d.status !== 'won' && d.status !== 'lost');
+  for (const d of pending) {
+    await attemptSubmit(d.id);
+  }
+}
 
 app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.header('stripe-signature');
@@ -284,6 +325,13 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
     return res.status(500).json({ error: 'internal_error' });
   }
 });
+
+if (env.AUTO_RETRY_ENABLED === 'true') {
+  const ms = Number(env.AUTO_RETRY_INTERVAL_MS || '60000');
+  setInterval(() => {
+    runAutoRetrySweep().catch((err) => console.error('auto-retry sweep failed', err));
+  }, ms);
+}
 
 const port = Number(env.PORT);
 app.listen(port, () => {

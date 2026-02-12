@@ -19,6 +19,8 @@
     .ok { color: #7ce38b; }
     .kpi { background:#0d1430; border:1px solid #2b396f; border-radius:10px; padding:10px; }
     .kpi .v { font-size:20px; font-weight:700; }
+    .modal { position: fixed; inset:0; background: rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; }
+    .modal .panel { width:min(900px,92vw); max-height:85vh; overflow:auto; background:#101733; border:1px solid #2a3d7a; border-radius:12px; padding:16px; }
   </style>
 </head>
 <body>
@@ -40,6 +42,7 @@
     <div class="row">
       <select id="merchantFilter"><option value="">Select merchant</option></select>
       <button id="refreshBtn">Refresh</button>
+      <button id="runSweepBtn">Run Submission Sweep</button>
     </div>
     <div class="row" style="margin-top:10px;">
       <label><input type="checkbox" id="autoSubmitEnabled" /> Auto-submit enabled</label>
@@ -93,11 +96,21 @@
     <table>
       <thead>
       <tr>
-        <th>ID</th><th>Reason</th><th>Status</th><th>Amount</th><th>Score</th><th>Review?</th><th>Due</th><th>Submitted</th><th>Action</th>
+        <th>ID</th><th>Reason</th><th>Status</th><th>Amount</th><th>Score</th><th>Review?</th><th>Due</th><th>Submitted</th><th>Action</th><th>Details</th>
       </tr>
       </thead>
       <tbody id="rows"></tbody>
     </table>
+  </div>
+</div>
+
+
+<div class="modal" id="detailModal">
+  <div class="panel">
+    <div class="row" style="justify-content:space-between;">
+      <h3>Dispute Details</h3><button id="closeDetailBtn">Close</button>
+    </div>
+    <pre id="detailBody" style="white-space:pre-wrap; color:#dbe6ff; font-size:12px;"></pre>
   </div>
 </div>
 
@@ -109,6 +122,8 @@ const kpisEl = document.getElementById('kpis');
 const recsEl = document.getElementById('recs');
 const statusFilter = document.getElementById('statusFilter');
 const reasonFilter = document.getElementById('reasonFilter');
+const detailModal = document.getElementById('detailModal');
+const detailBody = document.getElementById('detailBody');
 
 let merchants = [];
 let cachedDisputes = [];
@@ -174,7 +189,7 @@ async function loadRecommendations() {
 
 function renderDisputes(disputes) {
   if (!disputes.length) {
-    rows.innerHTML = `<tr><td colspan="9" class="muted">No disputes match current filters.</td></tr>`;
+    rows.innerHTML = `<tr><td colspan="10" class="muted">No disputes match current filters.</td></tr>`;
     return;
   }
   rows.innerHTML = disputes.map(d => `
@@ -188,6 +203,7 @@ function renderDisputes(disputes) {
         <td>${fmtDate(d.dueBy)}</td>
         <td>${d.submitted ? 'Yes' : 'No'}</td>
         <td><button onclick="retrySubmit('${d.id}')">Retry Submit</button></td>
+        <td><button onclick="viewDispute('${d.id}')">View</button></td>
       </tr>
   `).join('');
 }
@@ -206,7 +222,7 @@ function applyDisputeFilters() {
 async function loadDisputes() {
   if (!merchantFilter.value) {
     cachedDisputes = [];
-    rows.innerHTML = `<tr><td colspan="9" class="muted">Select a merchant.</td></tr>`;
+    rows.innerHTML = `<tr><td colspan="10" class="muted">Select a merchant.</td></tr>`;
     return;
   }
   const r = await fetch('/disputes?merchantId=' + encodeURIComponent(merchantFilter.value));
@@ -214,6 +230,17 @@ async function loadDisputes() {
   cachedDisputes = data.disputes || [];
   applyDisputeFilters();
 }
+
+
+async function viewDispute(id) {
+  const r = await fetch('/disputes/' + encodeURIComponent(id));
+  const data = await r.json();
+  detailBody.textContent = JSON.stringify(data.dispute || {}, null, 2);
+  detailModal.style.display = 'flex';
+}
+window.viewDispute = viewDispute;
+
+document.getElementById('closeDetailBtn').addEventListener('click', () => { detailModal.style.display = 'none'; });
 
 async function retrySubmit(id) {
   const r = await fetch('/disputes/' + encodeURIComponent(id) + '/retry-submit', { method: 'POST' });
@@ -290,6 +317,14 @@ document.getElementById('refreshBtn').addEventListener('click', async () => {
   await loadDisputes();
   await loadMetrics();
   await loadRecommendations();
+});
+
+document.getElementById('runSweepBtn').addEventListener('click', async () => {
+  await fetch('/jobs/run-submissions', { method: 'POST' });
+  await loadDisputes();
+  await loadMetrics();
+  await loadRecommendations();
+  alert('Submission sweep completed.');
 });
 
 statusFilter.addEventListener('change', applyDisputeFilters);
