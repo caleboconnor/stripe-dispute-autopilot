@@ -13,6 +13,7 @@ import {
   getMetrics,
   listDisputes,
   listMerchants,
+  markDeflected,
   markSubmitted,
   updateMerchantEvidenceProfile,
   updateMerchantSettings,
@@ -110,6 +111,10 @@ app.get('/recommendations', (req, res) => {
   if (reviewQueue > 0) {
     recommendations.push(`${reviewQueue} high-value disputes need manual review; process these first to avoid deadline misses.`);
   }
+  const lowValueOpen = disputes.filter((d) => !d.submitted && !d.deflected && d.amount <= 5000 && d.status !== 'won' && d.status !== 'lost').length;
+  if (lowValueOpen > 0) {
+    recommendations.push(`${lowValueOpen} low-value open disputes are candidates for inquiry deflection (proactive refund) to protect ratio and reduce ops load.`);
+  }
   if (metrics.overdue > 0) {
     recommendations.push(`${metrics.overdue} disputes are already overdue and unsubmitted. Trigger submission sweep + assign manual owner immediately.`);
   }
@@ -148,6 +153,34 @@ app.post('/disputes/:id/retry-submit', async (req, res) => {
     return res.status(500).json({ error: 'submit_failed', message: out.message });
   }
   return res.json({ ok: true, message: out.message });
+});
+
+app.post('/disputes/:id/deflect', async (req, res) => {
+  const dispute = getDispute(req.params.id);
+  if (!dispute) return res.status(404).json({ error: 'dispute_not_found' });
+  if (!dispute.chargeId) return res.status(400).json({ error: 'missing_charge_id' });
+  if (dispute.deflected) return res.json({ ok: true, message: 'already_deflected' });
+
+  const merchant = findMerchantById(dispute.merchantId);
+  const stripe = merchant
+    ? new Stripe(merchant.stripeAccessToken, { apiVersion: '2025-08-27.basil' })
+    : platformStripe;
+
+  try {
+    const refund = await stripe.refunds.create({
+      charge: dispute.chargeId,
+      metadata: {
+        dispute_id: dispute.id,
+        source: 'autopilot_deflection',
+      },
+      reason: 'requested_by_customer',
+    });
+
+    markDeflected(dispute.id, `Proactive refund ${refund.id} issued before representment.`);
+    return res.json({ ok: true, refundId: refund.id });
+  } catch (err) {
+    return res.status(500).json({ error: 'deflection_failed', message: (err as Error).message });
+  }
 });
 
 // Start Stripe OAuth (Connect)
@@ -299,6 +332,7 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
 
       await stripeForMerchant.disputes.update(dispute.id, built.payload);
 
+      const existing = getDispute(dispute.id);
       upsertDispute({
         id: dispute.id,
         merchantId: merchant?.id,
@@ -311,6 +345,9 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
         dueBy: dispute.evidence_details?.due_by ?? undefined,
         updatedAt: new Date().toISOString(),
         submitted: shouldAutoSubmit,
+        deflected: existing?.deflected,
+        deflectionReason: existing?.deflectionReason,
+        deflectedAt: existing?.deflectedAt,
         evidenceScore: built.score,
         manualReviewRequired,
         evidenceSummary: built.summary,
@@ -341,6 +378,9 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
         dueBy: dispute.evidence_details?.due_by ?? undefined,
         updatedAt: new Date().toISOString(),
         submitted: true,
+        deflected: existing?.deflected,
+        deflectionReason: existing?.deflectionReason,
+        deflectedAt: existing?.deflectedAt,
         evidenceScore: existing?.evidenceScore ?? 0,
         manualReviewRequired: existing?.manualReviewRequired ?? false,
         evidenceSummary: existing?.evidenceSummary ?? [],

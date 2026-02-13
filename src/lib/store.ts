@@ -49,6 +49,9 @@ export type DisputeRecord = {
   dueBy?: number;
   updatedAt: string;
   submitted: boolean;
+  deflected?: boolean;
+  deflectionReason?: string;
+  deflectedAt?: string;
   evidenceScore: number;
   manualReviewRequired: boolean;
   evidenceSummary: string[];
@@ -180,6 +183,17 @@ export function markSubmitted(id: string) {
   writeDb(db);
 }
 
+export function markDeflected(id: string, reason: string) {
+  const db = readDb();
+  const record = db.disputes.find((d) => d.id === id);
+  if (!record) return;
+  record.deflected = true;
+  record.deflectionReason = reason;
+  record.deflectedAt = new Date().toISOString();
+  record.updatedAt = new Date().toISOString();
+  writeDb(db);
+}
+
 export function addSubmissionAttempt(id: string, attempt: SubmissionAttempt) {
   const db = readDb();
   const record = db.disputes.find((d) => d.id === id);
@@ -196,6 +210,7 @@ export function getMetrics(merchantId?: string) {
   const won = disputes.filter((d) => d.status === 'won').length;
   const lost = disputes.filter((d) => d.status === 'lost').length;
   const submitted = disputes.filter((d) => d.submitted).length;
+  const deflected = disputes.filter((d) => d.deflected).length;
   const recoveredAmount = disputes.filter((d) => d.status === 'won').reduce((sum, d) => sum + (d.amount || 0), 0);
   const avgEvidenceScore = total ? Math.round(disputes.reduce((sum, d) => sum + (d.evidenceScore || 0), 0) / total) : 0;
 
@@ -219,6 +234,7 @@ export function getMetrics(merchantId?: string) {
     won,
     lost,
     submitted,
+    deflected,
     winRate: total ? Number(((won / total) * 100).toFixed(1)) : 0,
     recoveredAmount,
     avgEvidenceScore,

@@ -106,7 +106,7 @@
     <table>
       <thead>
       <tr>
-        <th>ID</th><th>Reason</th><th>Status</th><th>Amount</th><th>Score</th><th>Review?</th><th>Due</th><th>Submitted</th><th>Action</th><th>Details</th>
+        <th>ID</th><th>Reason</th><th>Status</th><th>Amount</th><th>Score</th><th>Review?</th><th>Due</th><th>Submitted</th><th>Deflected</th><th>Action</th><th>Details</th>
       </tr>
       </thead>
       <tbody id="rows"></tbody>
@@ -192,6 +192,7 @@ async function loadMetrics() {
     <div class="kpi"><div class="muted">Overdue Unsubmitted</div><div class="v">${m.overdue || 0}</div></div>
     <div class="kpi"><div class="muted">Monthly Dispute Ratio</div><div class="v">${ratioPct}%</div></div>
     <div class="kpi"><div class="muted">Ratio Alert Threshold</div><div class="v">${s.monthlyDisputeAlertThresholdPct ?? 0.9}%</div></div>
+    <div class="kpi"><div class="muted">Deflected</div><div class="v">${m.deflected || 0}</div></div>
   `;
 
   const byReason = m.byReason || {};
@@ -218,7 +219,7 @@ async function loadRecommendations() {
 
 function renderDisputes(disputes) {
   if (!disputes.length) {
-    rows.innerHTML = `<tr><td colspan="10" class="muted">No disputes match current filters.</td></tr>`;
+    rows.innerHTML = `<tr><td colspan="11" class="muted">No disputes match current filters.</td></tr>`;
     return;
   }
   rows.innerHTML = disputes.map(d => `
@@ -231,7 +232,11 @@ function renderDisputes(disputes) {
         <td>${d.manualReviewRequired ? 'Yes' : 'No'}</td>
         <td>${fmtDate(d.dueBy)}</td>
         <td>${d.submitted ? 'Yes' : 'No'}</td>
-        <td><button onclick="retrySubmit('${d.id}')">Retry Submit</button></td>
+        <td title="${d.deflectionReason || ''}">${d.deflected ? 'Yes' : 'No'}</td>
+        <td>
+          <button onclick="retrySubmit('${d.id}')">Retry Submit</button>
+          <button onclick="deflectDispute('${d.id}')">Deflect</button>
+        </td>
         <td><button onclick="viewDispute('${d.id}')">View</button></td>
       </tr>
   `).join('');
@@ -284,6 +289,22 @@ async function retrySubmit(id) {
   await loadRecommendations();
 }
 window.retrySubmit = retrySubmit;
+
+async function deflectDispute(id) {
+  const ok = confirm('Issue a proactive refund for this dispute to deflect and protect chargeback ratio?');
+  if (!ok) return;
+  const r = await fetch('/disputes/' + encodeURIComponent(id) + '/deflect', { method: 'POST' });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    alert('Deflection failed: ' + (j.message || 'Unknown error'));
+  } else {
+    alert('Deflection refund issued.');
+  }
+  await loadDisputes();
+  await loadMetrics();
+  await loadRecommendations();
+}
+window.deflectDispute = deflectDispute;
 
 document.getElementById('connectBtn').addEventListener('click', () => {
   const name = document.getElementById('merchantName').value || 'Merchant';
