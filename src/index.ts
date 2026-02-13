@@ -45,6 +45,21 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'stripe-dispute-autopilot', ts: new Date().toISOString() });
 });
 
+app.get('/api/version', (_req, res) => {
+  res.json({
+    service: 'stripe-dispute-autopilot',
+    deployedAt: new Date().toISOString(),
+    features: [
+      'merchant-connect',
+      'reason-scoring',
+      'auto-submit-rules',
+      'coaching-evidence-profiles',
+      'retry-sweep',
+      'recommendations',
+    ],
+  });
+});
+
 app.get('/api/merchants', (_req, res) => {
   res.json({ merchants: listMerchants() });
 });

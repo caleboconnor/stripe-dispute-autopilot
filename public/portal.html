@@ -82,6 +82,14 @@
   </div>
 
   <div class="card">
+    <h3>Win/Loss by Reason</h3>
+    <table>
+      <thead><tr><th>Reason</th><th>Total</th><th>Won</th><th>Lost</th></tr></thead>
+      <tbody id="reasonRows"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
     <h3>Disputes</h3>
     <div class="row" style="margin-bottom:10px;">
       <select id="statusFilter">
@@ -120,6 +128,7 @@ const rows = document.getElementById('rows');
 const connectState = document.getElementById('connectState');
 const kpisEl = document.getElementById('kpis');
 const recsEl = document.getElementById('recs');
+const reasonRows = document.getElementById('reasonRows');
 const statusFilter = document.getElementById('statusFilter');
 const reasonFilter = document.getElementById('reasonFilter');
 const detailModal = document.getElementById('detailModal');
@@ -174,6 +183,16 @@ async function loadMetrics() {
     <div class="kpi"><div class="muted">Recovered</div><div class="v">${fmtMoney(m.recoveredAmount || 0)}</div></div>
     <div class="kpi"><div class="muted">Avg Evidence Score</div><div class="v">${m.avgEvidenceScore || 0}</div></div>
   `;
+
+  const byReason = m.byReason || {};
+  const entries = Object.entries(byReason);
+  if (!entries.length) {
+    reasonRows.innerHTML = '<tr><td colspan="4" class="muted">No reason-code stats yet.</td></tr>';
+  } else {
+    reasonRows.innerHTML = entries
+      .map(([reason, v]) => `<tr><td>${reason}</td><td>${v.total}</td><td>${v.won}</td><td>${v.lost}</td></tr>`)
+      .join('');
+  }
 }
 
 async function loadRecommendations() {
