@@ -96,6 +96,8 @@ app.get('/recommendations', (req, res) => {
   const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
   const metrics = getMetrics(merchantId);
   const disputes = listDisputes(merchantId);
+  const merchant = merchantId ? findMerchantById(merchantId) : undefined;
+  const settings = merchant?.settings || defaultMerchantSettings();
   const recommendations: string[] = [];
 
   if (metrics.avgEvidenceScore < 75) {
@@ -108,10 +110,22 @@ app.get('/recommendations', (req, res) => {
   if (reviewQueue > 0) {
     recommendations.push(`${reviewQueue} high-value disputes need manual review; process these first to avoid deadline misses.`);
   }
-  const dueSoon = disputes.filter((d) => d.dueBy && d.dueBy * 1000 - Date.now() < 48 * 60 * 60 * 1000).length;
-  if (dueSoon > 0) {
-    recommendations.push(`${dueSoon} disputes are due in <48h. Prioritize submissions or enable stricter auto-submit for safe reason codes.`);
+  if (metrics.overdue > 0) {
+    recommendations.push(`${metrics.overdue} disputes are already overdue and unsubmitted. Trigger submission sweep + assign manual owner immediately.`);
   }
+  if (metrics.dueSoon > 0) {
+    recommendations.push(`${metrics.dueSoon} disputes are due in <48h. Prioritize submissions or enable stricter auto-submit for safe reason codes.`);
+  }
+
+  if (settings.monthlyTransactionCount > 0) {
+    const ratioPct = Number(((metrics.monthlyDisputes / settings.monthlyTransactionCount) * 100).toFixed(2));
+    if (ratioPct >= settings.monthlyDisputeAlertThresholdPct) {
+      recommendations.push(
+        `Chargeback ratio alert: ${ratioPct}% this month (threshold ${settings.monthlyDisputeAlertThresholdPct}%). Tighten fraud filters and issue proactive refunds on risky tickets.`,
+      );
+    }
+  }
+
   if (!recommendations.length) {
     recommendations.push('System looks healthy. Next step: connect real fulfillment/support data sources to further improve win rates.');
   }

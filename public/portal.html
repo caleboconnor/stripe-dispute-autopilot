@@ -49,6 +49,8 @@
       <input id="minEvidenceScore" type="number" min="0" max="100" placeholder="Min score" />
       <input id="manualReviewThreshold" type="number" min="0" placeholder="Manual review threshold (cents)" />
       <input id="autoSubmitReasons" placeholder="Reason codes (comma separated)" style="min-width:320px;" />
+      <input id="monthlyTransactionCount" type="number" min="1" placeholder="Monthly transaction count" />
+      <input id="ratioThresholdPct" type="number" min="0" step="0.01" placeholder="Dispute ratio alert %" />
       <button id="saveSettingsBtn">Save settings</button>
     </div>
     <hr style="border-color:#25325f; margin:14px 0;" />
@@ -159,6 +161,8 @@ function hydrateSettings() {
   document.getElementById('minEvidenceScore').value = s?.minEvidenceScore ?? 70;
   document.getElementById('manualReviewThreshold').value = s?.manualReviewAmountThreshold ?? 200000;
   document.getElementById('autoSubmitReasons').value = (s?.autoSubmitReasons || []).join(',');
+  document.getElementById('monthlyTransactionCount').value = s?.monthlyTransactionCount ?? 1000;
+  document.getElementById('ratioThresholdPct').value = s?.monthlyDisputeAlertThresholdPct ?? 0.9;
 
   document.getElementById('termsUrl').value = e.termsUrl || '';
   document.getElementById('refundPolicyUrl').value = e.refundPolicyUrl || '';
@@ -177,11 +181,17 @@ async function loadMetrics() {
   const r = await fetch('/metrics?merchantId=' + encodeURIComponent(merchantFilter.value));
   const data = await r.json();
   const m = data.metrics || {};
+  const s = selectedMerchant?.settings || {};
+  const ratioPct = s.monthlyTransactionCount ? (((m.monthlyDisputes || 0) / s.monthlyTransactionCount) * 100).toFixed(2) : '0.00';
   kpisEl.innerHTML = `
     <div class="kpi"><div class="muted">Total Disputes</div><div class="v">${m.total || 0}</div></div>
     <div class="kpi"><div class="muted">Win Rate</div><div class="v">${m.winRate || 0}%</div></div>
     <div class="kpi"><div class="muted">Recovered</div><div class="v">${fmtMoney(m.recoveredAmount || 0)}</div></div>
     <div class="kpi"><div class="muted">Avg Evidence Score</div><div class="v">${m.avgEvidenceScore || 0}</div></div>
+    <div class="kpi"><div class="muted">Due in <48h</div><div class="v">${m.dueSoon || 0}</div></div>
+    <div class="kpi"><div class="muted">Overdue Unsubmitted</div><div class="v">${m.overdue || 0}</div></div>
+    <div class="kpi"><div class="muted">Monthly Dispute Ratio</div><div class="v">${ratioPct}%</div></div>
+    <div class="kpi"><div class="muted">Ratio Alert Threshold</div><div class="v">${s.monthlyDisputeAlertThresholdPct ?? 0.9}%</div></div>
   `;
 
   const byReason = m.byReason || {};
@@ -286,7 +296,9 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
     autoSubmitEnabled: document.getElementById('autoSubmitEnabled').checked,
     minEvidenceScore: Number(document.getElementById('minEvidenceScore').value || 70),
     manualReviewAmountThreshold: Number(document.getElementById('manualReviewThreshold').value || 200000),
-    autoSubmitReasons: (document.getElementById('autoSubmitReasons').value || '').split(',').map(x => x.trim()).filter(Boolean)
+    autoSubmitReasons: (document.getElementById('autoSubmitReasons').value || '').split(',').map(x => x.trim()).filter(Boolean),
+    monthlyTransactionCount: Number(document.getElementById('monthlyTransactionCount').value || 1000),
+    monthlyDisputeAlertThresholdPct: Number(document.getElementById('ratioThresholdPct').value || 0.9)
   };
   const r = await fetch('/api/merchants/' + encodeURIComponent(merchantFilter.value) + '/settings', {
     method: 'PATCH',

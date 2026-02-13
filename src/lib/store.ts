@@ -6,6 +6,8 @@ export type MerchantSettings = {
   autoSubmitReasons: string[];
   minEvidenceScore: number;
   manualReviewAmountThreshold: number;
+  monthlyDisputeAlertThresholdPct: number;
+  monthlyTransactionCount: number;
 };
 
 export type EvidenceProfile = {
@@ -85,6 +87,8 @@ export function defaultMerchantSettings(): MerchantSettings {
     autoSubmitReasons: [],
     minEvidenceScore: 70,
     manualReviewAmountThreshold: 200000,
+    monthlyDisputeAlertThresholdPct: 0.9,
+    monthlyTransactionCount: 1000,
   };
 }
 
@@ -195,6 +199,13 @@ export function getMetrics(merchantId?: string) {
   const recoveredAmount = disputes.filter((d) => d.status === 'won').reduce((sum, d) => sum + (d.amount || 0), 0);
   const avgEvidenceScore = total ? Math.round(disputes.reduce((sum, d) => sum + (d.evidenceScore || 0), 0) / total) : 0;
 
+  const nowSec = Math.floor(Date.now() / 1000);
+  const dueSoon = disputes.filter((d) => d.dueBy && d.dueBy > nowSec && d.dueBy - nowSec <= 48 * 60 * 60 && d.status !== 'won' && d.status !== 'lost').length;
+  const overdue = disputes.filter((d) => d.dueBy && d.dueBy < nowSec && !d.submitted && d.status !== 'won' && d.status !== 'lost').length;
+
+  const monthStartIso = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
+  const monthlyDisputes = disputes.filter((d) => d.updatedAt >= monthStartIso).length;
+
   const byReason: Record<string, { total: number; won: number; lost: number }> = {};
   for (const d of disputes) {
     if (!byReason[d.reason]) byReason[d.reason] = { total: 0, won: 0, lost: 0 };
@@ -211,6 +222,9 @@ export function getMetrics(merchantId?: string) {
     winRate: total ? Number(((won / total) * 100).toFixed(1)) : 0,
     recoveredAmount,
     avgEvidenceScore,
+    dueSoon,
+    overdue,
+    monthlyDisputes,
     byReason,
   };
 }
