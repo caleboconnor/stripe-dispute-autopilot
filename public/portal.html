@@ -236,6 +236,7 @@ function renderDisputes(disputes) {
         <td>
           <button onclick="retrySubmit('${d.id}')">Retry Submit</button>
           <button onclick="deflectDispute('${d.id}')">Deflect</button>
+          <button onclick="viewEvidenceDraft('${d.id}')">Draft</button>
         </td>
         <td><button onclick="viewDispute('${d.id}')">View</button></td>
       </tr>
@@ -273,6 +274,14 @@ async function viewDispute(id) {
   detailModal.style.display = 'flex';
 }
 window.viewDispute = viewDispute;
+
+async function viewEvidenceDraft(id) {
+  const r = await fetch('/disputes/' + encodeURIComponent(id) + '/evidence-draft');
+  const data = await r.json();
+  detailBody.textContent = JSON.stringify(data.draft || {}, null, 2);
+  detailModal.style.display = 'flex';
+}
+window.viewEvidenceDraft = viewEvidenceDraft;
 
 document.getElementById('closeDetailBtn').addEventListener('click', () => { detailModal.style.display = 'none'; });
 

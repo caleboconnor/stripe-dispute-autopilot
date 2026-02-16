@@ -3,7 +3,7 @@ import express from 'express';
 import path from 'path';
 import Stripe from 'stripe';
 import { z } from 'zod';
-import { buildEvidencePackage } from './lib/evidence';
+import { buildEvidencePackage, generateEvidenceDraft } from './lib/evidence';
 import {
   addSubmissionAttempt,
   defaultMerchantSettings,
@@ -57,6 +57,7 @@ app.get('/api/version', (_req, res) => {
       'coaching-evidence-profiles',
       'retry-sweep',
       'recommendations',
+      'evidence-draft-generator',
     ],
   });
 });
@@ -86,6 +87,31 @@ app.get('/disputes/:id', (req, res) => {
   const dispute = getDispute(req.params.id);
   if (!dispute) return res.status(404).json({ error: 'dispute_not_found' });
   return res.json({ dispute });
+});
+
+app.get('/disputes/:id/evidence-draft', (req, res) => {
+  const dispute = getDispute(req.params.id);
+  if (!dispute) return res.status(404).json({ error: 'dispute_not_found' });
+
+  const merchant = dispute.merchantId ? findMerchantById(dispute.merchantId) : undefined;
+  const profile = merchant?.evidenceProfile || defaultEvidenceProfile();
+  const draft = generateEvidenceDraft({
+    disputeId: dispute.id,
+    reason: dispute.reason,
+    amount: dispute.amount,
+    currency: dispute.currency,
+    dueBy: dispute.dueBy,
+    evidenceSummary: dispute.evidenceSummary,
+    productDescription: profile.productDescriptionTemplate,
+    termsUrl: profile.termsUrl,
+    refundPolicyUrl: profile.refundPolicyUrl,
+    cancellationPolicyUrl: profile.cancellationPolicyUrl,
+    onboardingProof: profile.onboardingProofTemplate,
+    deliveryProof: profile.deliveryProofTemplate,
+    supportPolicy: profile.supportPolicyTemplate,
+  });
+
+  return res.json({ draft });
 });
 
 app.get('/metrics', (req, res) => {
