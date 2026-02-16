@@ -43,6 +43,7 @@
       <select id="merchantFilter"><option value="">Select merchant</option></select>
       <button id="refreshBtn">Refresh</button>
       <button id="runSweepBtn">Run Submission Sweep</button>
+      <button id="optimizeReasonsBtn">Optimize Reasons</button>
     </div>
     <div class="row" style="margin-top:10px;">
       <label><input type="checkbox" id="autoSubmitEnabled" /> Auto-submit enabled</label>
@@ -389,6 +390,23 @@ document.getElementById('runSweepBtn').addEventListener('click', async () => {
   await loadMetrics();
   await loadRecommendations();
   alert('Submission sweep completed.');
+});
+
+document.getElementById('optimizeReasonsBtn').addEventListener('click', async () => {
+  if (!merchantFilter.value) return alert('Select a merchant first.');
+  const r = await fetch('/api/merchants/' + encodeURIComponent(merchantFilter.value) + '/optimize-reasons', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ minCases: 3, minWinRatePct: 30 })
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) return alert('Failed to optimize reasons.');
+  const risky = (data.riskyReasons || []).join(', ') || 'none';
+  await loadMerchants();
+  await loadDisputes();
+  await loadMetrics();
+  await loadRecommendations();
+  alert('Reason optimization completed. Risky reasons: ' + risky);
 });
 
 statusFilter.addEventListener('change', applyDisputeFilters);

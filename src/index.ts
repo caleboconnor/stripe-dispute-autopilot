@@ -78,6 +78,44 @@ app.patch('/api/merchants/:merchantId/evidence-profile', (req, res) => {
   return res.json({ merchant: updated });
 });
 
+app.post('/api/merchants/:merchantId/optimize-reasons', (req, res) => {
+  const merchant = findMerchantById(req.params.merchantId);
+  if (!merchant) return res.status(404).json({ error: 'merchant_not_found' });
+
+  const minCases = Number(req.body?.minCases || 3);
+  const minWinRatePct = Number(req.body?.minWinRatePct || 30);
+  const metrics = getMetrics(merchant.id);
+  const byReason = metrics.byReason || {};
+
+  const riskyReasons = Object.entries(byReason)
+    .filter(([, v]) => v.total >= minCases)
+    .filter(([, v]) => (v.won / Math.max(1, v.total)) * 100 < minWinRatePct)
+    .map(([reason]) => reason);
+
+  const observedReasons = Object.keys(byReason);
+  const nextAllowed = observedReasons.filter((reason) => !riskyReasons.includes(reason));
+
+  const currentReasons = merchant.settings.autoSubmitReasons || [];
+  const fallbackToCurrent = nextAllowed.length === 0 ? currentReasons : nextAllowed;
+
+  const updated = updateMerchantSettings(merchant.id, {
+    autoSubmitReasons: fallbackToCurrent,
+  });
+
+  return res.json({
+    merchant: updated,
+    optimized: true,
+    minCases,
+    minWinRatePct,
+    riskyReasons,
+    autoSubmitReasons: updated?.settings.autoSubmitReasons || [],
+    note:
+      nextAllowed.length === 0
+        ? 'No safe reason codes met thresholds; kept current auto-submit list.'
+        : 'Auto-submit reasons updated based on recent win-rate performance.',
+  });
+});
+
 app.get('/disputes', (req, res) => {
   const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
   res.json({ disputes: listDisputes(merchantId) });
@@ -132,6 +170,16 @@ app.get('/recommendations', (req, res) => {
   }
   if (metrics.winRate < 40 && metrics.total >= 5) {
     recommendations.push('Win rate is low: tighten reason-code playbooks and raise minimum evidence score before auto-submit.');
+  }
+
+  const weakReasons = Object.entries(metrics.byReason || {})
+    .filter(([, v]) => v.total >= 3)
+    .filter(([, v]) => (v.won / Math.max(1, v.total)) * 100 < 30)
+    .map(([reason]) => reason);
+  if (weakReasons.length) {
+    recommendations.push(
+      `Weak reason-code performance detected: ${weakReasons.join(', ')}. Consider disabling auto-submit for these (use Optimize Reasons).`,
+    );
   }
   const reviewQueue = disputes.filter((d) => d.manualReviewRequired && !d.submitted).length;
   if (reviewQueue > 0) {
