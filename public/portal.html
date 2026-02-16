@@ -51,6 +51,7 @@
       <input id="autoSubmitReasons" placeholder="Reason codes (comma separated)" style="min-width:320px;" />
       <input id="monthlyTransactionCount" type="number" min="1" placeholder="Monthly transaction count" />
       <input id="ratioThresholdPct" type="number" min="0" step="0.01" placeholder="Dispute ratio alert %" />
+      <input id="submissionDelayMinutes" type="number" min="0" step="1" placeholder="Submission delay (minutes)" />
       <button id="saveSettingsBtn">Save settings</button>
     </div>
     <hr style="border-color:#25325f; margin:14px 0;" />
@@ -163,6 +164,7 @@ function hydrateSettings() {
   document.getElementById('autoSubmitReasons').value = (s?.autoSubmitReasons || []).join(',');
   document.getElementById('monthlyTransactionCount').value = s?.monthlyTransactionCount ?? 1000;
   document.getElementById('ratioThresholdPct').value = s?.monthlyDisputeAlertThresholdPct ?? 0.9;
+  document.getElementById('submissionDelayMinutes').value = s?.submissionDelayMinutes ?? 0;
 
   document.getElementById('termsUrl').value = e.termsUrl || '';
   document.getElementById('refundPolicyUrl').value = e.refundPolicyUrl || '';
@@ -328,7 +330,8 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
     manualReviewAmountThreshold: Number(document.getElementById('manualReviewThreshold').value || 200000),
     autoSubmitReasons: (document.getElementById('autoSubmitReasons').value || '').split(',').map(x => x.trim()).filter(Boolean),
     monthlyTransactionCount: Number(document.getElementById('monthlyTransactionCount').value || 1000),
-    monthlyDisputeAlertThresholdPct: Number(document.getElementById('ratioThresholdPct').value || 0.9)
+    monthlyDisputeAlertThresholdPct: Number(document.getElementById('ratioThresholdPct').value || 0.9),
+    submissionDelayMinutes: Number(document.getElementById('submissionDelayMinutes').value || 0)
   };
   const r = await fetch('/api/merchants/' + encodeURIComponent(merchantFilter.value) + '/settings', {
     method: 'PATCH',

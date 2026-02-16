@@ -141,6 +141,23 @@ app.get('/recommendations', (req, res) => {
   if (lowValueOpen > 0) {
     recommendations.push(`${lowValueOpen} low-value open disputes are candidates for inquiry deflection (proactive refund) to protect ratio and reduce ops load.`);
   }
+
+  if ((settings.submissionDelayMinutes || 0) > 0) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const delayedQueue = disputes.filter(
+      (d) =>
+        !d.submitted &&
+        d.status !== 'won' &&
+        d.status !== 'lost' &&
+        d.disputeCreatedAt &&
+        nowSec - d.disputeCreatedAt < settings.submissionDelayMinutes * 60,
+    ).length;
+    if (delayedQueue > 0) {
+      recommendations.push(
+        `${delayedQueue} disputes are currently held by submission delay (${settings.submissionDelayMinutes}m) for internal review before auto-submit.`,
+      );
+    }
+  }
   if (metrics.overdue > 0) {
     recommendations.push(`${metrics.overdue} disputes are already overdue and unsubmitted. Trigger submission sweep + assign manual owner immediately.`);
   }
@@ -263,9 +280,14 @@ async function attemptSubmit(disputeId: string) {
     ? settings.autoSubmitReasons.includes(dispute.reason)
     : true;
 
+  const nowSec = Math.floor(Date.now() / 1000);
+  const delayWindowSec = (settings.submissionDelayMinutes || 0) * 60;
+  const isWithinDelayWindow = !!(dispute.disputeCreatedAt && delayWindowSec > 0 && nowSec - dispute.disputeCreatedAt < delayWindowSec);
+
   if (!settings.autoSubmitEnabled) return { ok: false, message: 'auto_submit_disabled' };
   if (!reasonAllowed) return { ok: false, message: 'reason_not_allowed' };
   if (dispute.manualReviewRequired) return { ok: false, message: 'manual_review_required' };
+  if (isWithinDelayWindow) return { ok: false, message: 'submission_delay_window_active' };
   if ((dispute.evidenceScore || 0) < settings.minEvidenceScore) return { ok: false, message: 'score_below_threshold' };
   if (dispute.submitted) return { ok: false, message: 'already_submitted' };
 
@@ -351,8 +373,11 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
         ? settings.autoSubmitReasons.includes(dispute.reason)
         : true;
       const manualReviewRequired = dispute.amount >= settings.manualReviewAmountThreshold;
+      const nowSec = Math.floor(Date.now() / 1000);
+      const delayWindowSec = (settings.submissionDelayMinutes || 0) * 60;
+      const delaySatisfied = delayWindowSec <= 0 || nowSec - dispute.created >= delayWindowSec;
       const shouldAutoSubmit =
-        settings.autoSubmitEnabled && reasonAllowed && built.score >= settings.minEvidenceScore && !manualReviewRequired;
+        settings.autoSubmitEnabled && reasonAllowed && built.score >= settings.minEvidenceScore && !manualReviewRequired && delaySatisfied;
 
       built.payload.submit = shouldAutoSubmit;
 
@@ -369,6 +394,7 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
         currency: dispute.currency,
         status: dispute.status,
         dueBy: dispute.evidence_details?.due_by ?? undefined,
+        disputeCreatedAt: existing?.disputeCreatedAt ?? dispute.created,
         updatedAt: new Date().toISOString(),
         submitted: shouldAutoSubmit,
         deflected: existing?.deflected,
@@ -402,6 +428,7 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
         currency: dispute.currency,
         status: dispute.status,
         dueBy: dispute.evidence_details?.due_by ?? undefined,
+        disputeCreatedAt: existing?.disputeCreatedAt ?? dispute.created,
         updatedAt: new Date().toISOString(),
         submitted: true,
         deflected: existing?.deflected,

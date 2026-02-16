@@ -8,6 +8,7 @@ export type MerchantSettings = {
   manualReviewAmountThreshold: number;
   monthlyDisputeAlertThresholdPct: number;
   monthlyTransactionCount: number;
+  submissionDelayMinutes: number;
 };
 
 export type EvidenceProfile = {
@@ -47,6 +48,7 @@ export type DisputeRecord = {
   currency: string;
   status: string;
   dueBy?: number;
+  disputeCreatedAt?: number;
   updatedAt: string;
   submitted: boolean;
   deflected?: boolean;
@@ -92,6 +94,7 @@ export function defaultMerchantSettings(): MerchantSettings {
     manualReviewAmountThreshold: 200000,
     monthlyDisputeAlertThresholdPct: 0.9,
     monthlyTransactionCount: 1000,
+    submissionDelayMinutes: 0,
   };
 }
 
