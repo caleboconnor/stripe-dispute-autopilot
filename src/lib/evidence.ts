@@ -17,6 +17,10 @@ export type EvidenceInput = {
   shippingCarrier?: string;
   shippingTrackingNumber?: string;
   shippingDate?: string;
+  statementDescriptor?: string;
+  supportEmail?: string;
+  supportPhone?: string;
+  supportUrl?: string;
 };
 
 export type BuiltEvidence = {
@@ -43,6 +47,8 @@ function scoreEvidence(i: EvidenceInput, summary: string[]): number {
   if (i.cancellationPolicyUrl) score += 10;
   if (i.accessLog) score += 10;
   if (i.shippingTrackingNumber) score += 10;
+  if (i.statementDescriptor) score += 5;
+  if (i.supportEmail || i.supportPhone || i.supportUrl) score += 5;
 
   summary.push(`Evidence score: ${Math.min(100, score)}/100`);
   return Math.min(100, score);
@@ -108,6 +114,23 @@ export function buildEvidencePackage(input: EvidenceInput): BuiltEvidence {
       ...base.evidence,
       shipping_carrier: input.shippingCarrier,
       shipping_tracking_number: input.shippingTrackingNumber,
+    };
+  }
+
+  if (input.statementDescriptor) {
+    base.evidence = {
+      ...base.evidence,
+      uncategorized_text: `${base.evidence?.uncategorized_text}\nCard statement descriptor: ${input.statementDescriptor}`,
+    };
+  }
+
+  const supportDetails = [input.supportEmail ? `email ${input.supportEmail}` : '', input.supportPhone ? `phone ${input.supportPhone}` : '', input.supportUrl ? `portal ${input.supportUrl}` : '']
+    .filter(Boolean)
+    .join(', ');
+  if (supportDetails) {
+    base.evidence = {
+      ...base.evidence,
+      uncategorized_text: `${base.evidence?.uncategorized_text}\nCustomer support channels shown on receipt: ${supportDetails}`,
     };
   }
 

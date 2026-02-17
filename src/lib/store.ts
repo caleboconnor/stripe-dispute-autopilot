@@ -9,6 +9,10 @@ export type MerchantSettings = {
   monthlyDisputeAlertThresholdPct: number;
   monthlyTransactionCount: number;
   submissionDelayMinutes: number;
+  statementDescriptor: string;
+  supportEmail: string;
+  supportPhone: string;
+  supportUrl: string;
 };
 
 export type EvidenceProfile = {
@@ -95,6 +99,10 @@ export function defaultMerchantSettings(): MerchantSettings {
     monthlyDisputeAlertThresholdPct: 0.9,
     monthlyTransactionCount: 1000,
     submissionDelayMinutes: 0,
+    statementDescriptor: '',
+    supportEmail: '',
+    supportPhone: '',
+    supportUrl: '',
   };
 }
 

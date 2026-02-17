@@ -5,7 +5,7 @@ A Stripe dispute automation MVP focused on chargeback recovery workflows.
 ## Features in this build
 - Stripe webhook ingestion for dispute events
 - Reason-code evidence playbooks + evidence quality scoring
-- Merchant-level automation settings (auto-submit, thresholds, allowed reason codes)
+- Merchant-level automation settings (auto-submit, thresholds, allowed reason codes, statement descriptor, support channels)
 - Info/coaching evidence profiles (terms/refund/cancellation/onboarding/delivery/support templates)
 - Optional auto-submit based on score/rules (with manual review threshold)
 - Merchant portal UI (`/portal.html`) with KPIs, deadline risk tracking, dispute ratio alerts, retry-submit, and one-click deflection refund action
@@ -48,6 +48,7 @@ npm run dev
 - `GET /health`
 - `GET /api/merchants`
 - `GET /disputes?merchantId=<optional>`
+- `GET /disputes/:id/receipt-clarity-draft`
 - `POST /disputes/:id/retry-submit`
 - `POST /disputes/:id/deflect`
 - `GET /metrics?merchantId=<optional>`

@@ -58,6 +58,7 @@ app.get('/api/version', (_req, res) => {
       'retry-sweep',
       'recommendations',
       'evidence-draft-generator',
+      'descriptor-receipt-clarity',
     ],
   });
 });
@@ -152,6 +153,34 @@ app.get('/disputes/:id/evidence-draft', (req, res) => {
   return res.json({ draft });
 });
 
+app.get('/disputes/:id/receipt-clarity-draft', (req, res) => {
+  const dispute = getDispute(req.params.id);
+  if (!dispute) return res.status(404).json({ error: 'dispute_not_found' });
+
+  const merchant = dispute.merchantId ? findMerchantById(dispute.merchantId) : undefined;
+  const settings = merchant?.settings || defaultMerchantSettings();
+  const profile = merchant?.evidenceProfile || defaultEvidenceProfile();
+
+  const clarityDraft = {
+    headline: `Receipt clarity draft for ${dispute.id}`,
+    statementDescriptor: settings.statementDescriptor || '[set descriptor] ',
+    customerSupport: {
+      email: settings.supportEmail || '[set support email]',
+      phone: settings.supportPhone || '[set support phone]',
+      url: settings.supportUrl || '[set support portal]',
+    },
+    receiptFooterTemplate: [
+      `Need help with your purchase? Contact ${settings.supportEmail || '[support-email]'}${
+        settings.supportPhone ? ` or call ${settings.supportPhone}` : ''
+      }.`,
+      `Manage refunds/cancellations: ${settings.supportUrl || profile.cancellationPolicyUrl || '[support-url]'}`,
+      `Statement descriptor: ${settings.statementDescriptor || '[descriptor]'}`,
+    ].join(' '),
+  };
+
+  return res.json({ draft: clarityDraft });
+});
+
 app.get('/metrics', (req, res) => {
   const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
   return res.json({ metrics: getMetrics(merchantId) });
@@ -164,6 +193,15 @@ app.get('/recommendations', (req, res) => {
   const merchant = merchantId ? findMerchantById(merchantId) : undefined;
   const settings = merchant?.settings || defaultMerchantSettings();
   const recommendations: string[] = [];
+
+  if (merchantId) {
+    if (!settings.statementDescriptor) {
+      recommendations.push('Set a clear statement descriptor in merchant settings to reduce "unrecognized charge" disputes.');
+    }
+    if (!settings.supportEmail && !settings.supportPhone && !settings.supportUrl) {
+      recommendations.push('Add visible support contact channels (email/phone/portal) for receipt clarity and faster pre-dispute resolution.');
+    }
+  }
 
   if (metrics.avgEvidenceScore < 75) {
     recommendations.push('Increase evidence quality: add stronger onboarding, delivery, and support proofs in Evidence Profile.');
@@ -397,10 +435,16 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
 
       let customerEmail = '';
       let customerName = '';
+      let chargeStatementDescriptor = '';
       if (chargeId) {
         const charge = await stripeForMerchant.charges.retrieve(chargeId);
         customerEmail = charge.billing_details?.email || '';
         customerName = charge.billing_details?.name || '';
+        chargeStatementDescriptor =
+          charge.calculated_statement_descriptor ||
+          charge.statement_descriptor ||
+          charge.statement_descriptor_suffix ||
+          '';
       }
 
       const profile = merchant?.evidenceProfile || defaultEvidenceProfile();
@@ -414,9 +458,23 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
         cancellationPolicyUrl: profile.cancellationPolicyUrl,
         accessLog: profile.deliveryProofTemplate,
         supportInteraction: `${profile.supportPolicyTemplate || ''}\n${profile.onboardingProofTemplate || ''}`.trim(),
+        statementDescriptor: chargeStatementDescriptor || merchant?.settings.statementDescriptor,
+        supportEmail: merchant?.settings.supportEmail,
+        supportPhone: merchant?.settings.supportPhone,
+        supportUrl: merchant?.settings.supportUrl,
       });
 
       const settings = merchant?.settings || defaultMerchantSettings();
+      if (settings.statementDescriptor) {
+        if (!chargeStatementDescriptor) {
+          built.summary.push('No statement descriptor detected on charge. Configure descriptor to reduce unrecognized transaction disputes.');
+        } else if (!chargeStatementDescriptor.toLowerCase().includes(settings.statementDescriptor.toLowerCase())) {
+          built.summary.push(
+            `Descriptor mismatch: expected similar to "${settings.statementDescriptor}", got "${chargeStatementDescriptor}".`,
+          );
+        }
+      }
+
       const reasonAllowed = settings.autoSubmitReasons.length
         ? settings.autoSubmitReasons.includes(dispute.reason)
         : true;
