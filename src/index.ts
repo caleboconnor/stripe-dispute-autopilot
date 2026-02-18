@@ -20,6 +20,7 @@ import {
   upsertDispute,
   upsertMerchant,
   defaultEvidenceProfile,
+  updateDisputeWorkflow,
 } from './lib/store';
 
 const env = z
@@ -126,6 +127,28 @@ app.get('/disputes/:id', (req, res) => {
   const dispute = getDispute(req.params.id);
   if (!dispute) return res.status(404).json({ error: 'dispute_not_found' });
   return res.json({ dispute });
+});
+
+app.patch('/disputes/:id/workflow', (req, res) => {
+  const schema = z
+    .object({
+      owner: z.string().min(1).max(100).optional(),
+      workflowStatus: z
+        .enum(['new', 'in_progress', 'waiting_on_customer', 'ready_to_submit', 'submitted', 'closed'])
+        .optional(),
+      nextActionAt: z.string().datetime().optional(),
+      internalNotes: z.string().max(4000).optional(),
+    })
+    .strict();
+
+  const parsed = schema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'invalid_workflow_patch', details: parsed.error.flatten() });
+  }
+
+  const updated = updateDisputeWorkflow(req.params.id, parsed.data);
+  if (!updated) return res.status(404).json({ error: 'dispute_not_found' });
+  return res.json({ dispute: updated });
 });
 
 app.get('/disputes/:id/evidence-draft', (req, res) => {
@@ -252,11 +275,15 @@ app.get('/api/disputes/queue', (req, res) => {
         evidenceScore: d.evidenceScore,
         submitted: d.submitted,
         deflected: d.deflected,
+        owner: d.owner,
+        workflowStatus: d.workflowStatus,
+        nextActionAt: d.nextActionAt,
         readiness,
       };
     })
     .sort((a, b) => b.readiness.priority - a.readiness.priority);
 
+  const nowSec = Math.floor(Date.now() / 1000);
   const summary = {
     totalOpen: queue.length,
     ready: queue.filter((d) => d.readiness.ready).length,
@@ -264,8 +291,10 @@ app.get('/api/disputes/queue', (req, res) => {
     delayWindow: queue.filter((d) => d.readiness.reason === 'submission_delay_window_active').length,
     blockedByScore: queue.filter((d) => d.readiness.reason === 'score_below_threshold').length,
     blockedByReason: queue.filter((d) => d.readiness.reason === 'reason_not_allowed').length,
-    overdue: queue.filter((d) => d.dueBy && d.dueBy < Math.floor(Date.now() / 1000)).length,
-    dueIn48h: queue.filter((d) => d.dueBy && d.dueBy > Math.floor(Date.now() / 1000) && d.dueBy - Math.floor(Date.now() / 1000) <= 48 * 60 * 60).length,
+    overdue: queue.filter((d) => d.dueBy && d.dueBy < nowSec).length,
+    dueIn48h: queue.filter((d) => d.dueBy && d.dueBy > nowSec && d.dueBy - nowSec <= 48 * 60 * 60).length,
+    unassigned: queue.filter((d) => !d.owner).length,
+    highPriorityUnassigned: queue.filter((d) => d.readiness.priority >= 90 && !d.owner).length,
   };
 
   return res.json({ summary, queue });
@@ -462,6 +491,7 @@ async function attemptSubmit(disputeId: string) {
     };
     await stripe.disputes.update(dispute.id, payload);
     markSubmitted(dispute.id);
+    updateDisputeWorkflow(dispute.id, { workflowStatus: 'submitted' });
     addSubmissionAttempt(dispute.id, {
       at: new Date().toISOString(),
       success: true,
@@ -581,6 +611,12 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
         evidenceScore: built.score,
         manualReviewRequired,
         evidenceSummary: built.summary,
+        owner: existing?.owner,
+        workflowStatus:
+          existing?.workflowStatus ||
+          (shouldAutoSubmit ? 'submitted' : manualReviewRequired ? 'in_progress' : 'new'),
+        nextActionAt: existing?.nextActionAt,
+        internalNotes: existing?.internalNotes,
         submissionAttempts: [
           {
             at: new Date().toISOString(),
@@ -615,6 +651,10 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
         evidenceScore: existing?.evidenceScore ?? 0,
         manualReviewRequired: existing?.manualReviewRequired ?? false,
         evidenceSummary: existing?.evidenceSummary ?? [],
+        owner: existing?.owner,
+        workflowStatus: 'closed',
+        nextActionAt: existing?.nextActionAt,
+        internalNotes: existing?.internalNotes,
         submissionAttempts: existing?.submissionAttempts ?? [],
       });
     }

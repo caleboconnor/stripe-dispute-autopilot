@@ -49,6 +49,7 @@ npm run dev
 - `GET /api/merchants`
 - `GET /disputes?merchantId=<optional>`
 - `GET /disputes/:id/receipt-clarity-draft`
+- `PATCH /disputes/:id/workflow` (owner/status/next action/notes)
 - `POST /disputes/:id/retry-submit`
 - `POST /disputes/:id/deflect`
 - `GET /metrics?merchantId=<optional>`

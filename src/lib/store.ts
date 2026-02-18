@@ -63,6 +63,10 @@ export type DisputeRecord = {
   evidenceSummary: string[];
   submissionAttempts: SubmissionAttempt[];
   latestError?: string;
+  owner?: string;
+  workflowStatus?: 'new' | 'in_progress' | 'waiting_on_customer' | 'ready_to_submit' | 'submitted' | 'closed';
+  nextActionAt?: string;
+  internalNotes?: string;
 };
 
 type DbShape = {
@@ -213,6 +217,19 @@ export function addSubmissionAttempt(id: string, attempt: SubmissionAttempt) {
   record.updatedAt = new Date().toISOString();
   if (!attempt.success) record.latestError = attempt.message;
   writeDb(db);
+}
+
+export function updateDisputeWorkflow(
+  id: string,
+  patch: Partial<Pick<DisputeRecord, 'owner' | 'workflowStatus' | 'nextActionAt' | 'internalNotes'>>,
+) {
+  const db = readDb();
+  const record = db.disputes.find((d) => d.id === id);
+  if (!record) return undefined;
+  Object.assign(record, patch);
+  record.updatedAt = new Date().toISOString();
+  writeDb(db);
+  return record;
 }
 
 export function getMetrics(merchantId?: string) {
