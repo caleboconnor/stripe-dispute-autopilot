@@ -186,6 +186,91 @@ app.get('/metrics', (req, res) => {
   return res.json({ metrics: getMetrics(merchantId) });
 });
 
+function getSubmissionReadiness(disputeId: string) {
+  const dispute = getDispute(disputeId);
+  if (!dispute) {
+    return { ready: false, reason: 'dispute_not_found' as const, priority: 0 };
+  }
+
+  const merchant = findMerchantById(dispute.merchantId);
+  const settings = merchant?.settings || defaultMerchantSettings();
+  const reasonAllowed = settings.autoSubmitReasons.length
+    ? settings.autoSubmitReasons.includes(dispute.reason)
+    : true;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const delayWindowSec = (settings.submissionDelayMinutes || 0) * 60;
+  const isWithinDelayWindow = !!(
+    dispute.disputeCreatedAt &&
+    delayWindowSec > 0 &&
+    nowSec - dispute.disputeCreatedAt < delayWindowSec
+  );
+
+  if (dispute.status === 'won' || dispute.status === 'lost') return { ready: false, reason: 'closed', priority: 0 };
+  if (dispute.submitted) return { ready: false, reason: 'already_submitted', priority: 0 };
+  if (!settings.autoSubmitEnabled) return { ready: false, reason: 'auto_submit_disabled', priority: 20 };
+  if (!reasonAllowed) return { ready: false, reason: 'reason_not_allowed', priority: 25 };
+  if (dispute.manualReviewRequired) return { ready: false, reason: 'manual_review_required', priority: 95 };
+  if (isWithinDelayWindow) return { ready: false, reason: 'submission_delay_window_active', priority: 60 };
+  if ((dispute.evidenceScore || 0) < settings.minEvidenceScore) return { ready: false, reason: 'score_below_threshold', priority: 85 };
+
+  const dueBy = dispute.dueBy || 0;
+  const secondsToDue = dueBy ? dueBy - nowSec : undefined;
+  const dueUrgency = !secondsToDue
+    ? 50
+    : secondsToDue < 0
+      ? 100
+      : secondsToDue <= 4 * 60 * 60
+        ? 98
+        : secondsToDue <= 24 * 60 * 60
+          ? 90
+          : secondsToDue <= 48 * 60 * 60
+            ? 80
+            : 65;
+
+  const amountUrgency = Math.min(25, Math.round((dispute.amount || 0) / 5000));
+  const priority = Math.min(100, dueUrgency + amountUrgency);
+
+  return { ready: true, reason: 'ready' as const, priority };
+}
+
+app.get('/api/disputes/queue', (req, res) => {
+  const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
+  const disputes = listDisputes(merchantId).filter((d) => d.status !== 'won' && d.status !== 'lost');
+
+  const queue = disputes
+    .map((d) => {
+      const readiness = getSubmissionReadiness(d.id);
+      return {
+        id: d.id,
+        merchantId: d.merchantId,
+        reason: d.reason,
+        status: d.status,
+        amount: d.amount,
+        currency: d.currency,
+        dueBy: d.dueBy,
+        evidenceScore: d.evidenceScore,
+        submitted: d.submitted,
+        deflected: d.deflected,
+        readiness,
+      };
+    })
+    .sort((a, b) => b.readiness.priority - a.readiness.priority);
+
+  const summary = {
+    totalOpen: queue.length,
+    ready: queue.filter((d) => d.readiness.ready).length,
+    manualReview: queue.filter((d) => d.readiness.reason === 'manual_review_required').length,
+    delayWindow: queue.filter((d) => d.readiness.reason === 'submission_delay_window_active').length,
+    blockedByScore: queue.filter((d) => d.readiness.reason === 'score_below_threshold').length,
+    blockedByReason: queue.filter((d) => d.readiness.reason === 'reason_not_allowed').length,
+    overdue: queue.filter((d) => d.dueBy && d.dueBy < Math.floor(Date.now() / 1000)).length,
+    dueIn48h: queue.filter((d) => d.dueBy && d.dueBy > Math.floor(Date.now() / 1000) && d.dueBy - Math.floor(Date.now() / 1000) <= 48 * 60 * 60).length,
+  };
+
+  return res.json({ summary, queue });
+});
+
 app.get('/recommendations', (req, res) => {
   const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
   const metrics = getMetrics(merchantId);
@@ -360,23 +445,10 @@ async function attemptSubmit(disputeId: string) {
   const dispute = getDispute(disputeId);
   if (!dispute) return { ok: false, message: 'dispute_not_found' };
 
+  const readiness = getSubmissionReadiness(disputeId);
+  if (!readiness.ready) return { ok: false, message: readiness.reason };
+
   const merchant = findMerchantById(dispute.merchantId);
-  const settings = merchant?.settings || defaultMerchantSettings();
-  const reasonAllowed = settings.autoSubmitReasons.length
-    ? settings.autoSubmitReasons.includes(dispute.reason)
-    : true;
-
-  const nowSec = Math.floor(Date.now() / 1000);
-  const delayWindowSec = (settings.submissionDelayMinutes || 0) * 60;
-  const isWithinDelayWindow = !!(dispute.disputeCreatedAt && delayWindowSec > 0 && nowSec - dispute.disputeCreatedAt < delayWindowSec);
-
-  if (!settings.autoSubmitEnabled) return { ok: false, message: 'auto_submit_disabled' };
-  if (!reasonAllowed) return { ok: false, message: 'reason_not_allowed' };
-  if (dispute.manualReviewRequired) return { ok: false, message: 'manual_review_required' };
-  if (isWithinDelayWindow) return { ok: false, message: 'submission_delay_window_active' };
-  if ((dispute.evidenceScore || 0) < settings.minEvidenceScore) return { ok: false, message: 'score_below_threshold' };
-  if (dispute.submitted) return { ok: false, message: 'already_submitted' };
-
   const stripe = merchant
     ? new Stripe(merchant.stripeAccessToken, { apiVersion: '2025-08-27.basil' })
     : platformStripe;

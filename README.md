@@ -53,6 +53,7 @@ npm run dev
 - `POST /disputes/:id/deflect`
 - `GET /metrics?merchantId=<optional>`
 - `GET /recommendations?merchantId=<optional>`
+- `GET /api/disputes/queue?merchantId=<optional>` (prioritized open-dispute queue with readiness reasons)
 - `GET /auth/stripe/start?merchantName=...`
 - `GET /auth/stripe/callback`
 - `POST /webhooks/stripe`
