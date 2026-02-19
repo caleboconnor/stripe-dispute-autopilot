@@ -11,16 +11,21 @@ import {
   findMerchantByStripeAccountId,
   getDispute,
   getMetrics,
+  listAlerts,
   listDisputes,
+  listInquiries,
   listMerchants,
   markDeflected,
   markSubmitted,
   updateMerchantEvidenceProfile,
   updateMerchantSettings,
+  upsertAlert,
   upsertDispute,
+  upsertInquiry,
   upsertMerchant,
   defaultEvidenceProfile,
   updateDisputeWorkflow,
+  findAlertByExternal,
 } from './lib/store';
 
 const env = z
@@ -207,6 +212,173 @@ app.get('/disputes/:id/receipt-clarity-draft', (req, res) => {
 app.get('/metrics', (req, res) => {
   const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
   return res.json({ metrics: getMetrics(merchantId) });
+});
+
+app.get('/api/alerts', (req, res) => {
+  const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
+  return res.json({ alerts: listAlerts(merchantId) });
+});
+
+app.post('/api/alerts/ingest', async (req, res) => {
+  const schema = z
+    .object({
+      merchantId: z.string().optional(),
+      disputeId: z.string().optional(),
+      chargeId: z.string().optional(),
+      source: z.enum(['verifi', 'ethoca', 'network', 'manual']).default('manual'),
+      externalAlertId: z.string().optional(),
+      amount: z.number().int().positive().optional(),
+      currency: z.string().default('usd'),
+      autoRefund: z.boolean().default(true),
+    })
+    .refine((v) => !!v.chargeId || !!v.disputeId, { message: 'chargeId_or_disputeId_required' });
+
+  const parsed = schema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'invalid_alert', details: parsed.error.flatten() });
+  }
+
+  const payload = parsed.data;
+  const existing = findAlertByExternal(payload.source, payload.externalAlertId, payload.chargeId);
+  if (existing) {
+    const dup = upsertAlert({
+      id: `alert_${Date.now()}`,
+      merchantId: payload.merchantId,
+      disputeId: payload.disputeId,
+      chargeId: payload.chargeId,
+      source: payload.source,
+      externalAlertId: payload.externalAlertId,
+      amount: payload.amount,
+      currency: payload.currency,
+      refunded: false,
+      duplicateOf: existing.id,
+      createdAt: new Date().toISOString(),
+    });
+    return res.json({ ok: true, deduplicated: true, alert: dup, original: existing.id });
+  }
+
+  const dispute = payload.disputeId ? getDispute(payload.disputeId) : undefined;
+  const merchant = findMerchantById(payload.merchantId || dispute?.merchantId);
+  const chargeId = payload.chargeId || dispute?.chargeId;
+  let refundId: string | undefined;
+
+  const shouldRefund = payload.autoRefund && merchant?.settings.alertsAutoRefundEnabled !== false;
+
+  if (shouldRefund && chargeId) {
+    const stripe = merchant
+      ? new Stripe(merchant.stripeAccessToken, { apiVersion: '2025-08-27.basil' })
+      : platformStripe;
+
+    try {
+      const refund = await stripe.refunds.create({
+        charge: chargeId,
+        metadata: {
+          source: 'alerts_ingest',
+          alert_source: payload.source,
+          dispute_id: dispute?.id || '',
+        },
+        reason: 'requested_by_customer',
+      });
+      refundId = refund.id;
+      if (dispute?.id) markDeflected(dispute.id, `Alert deflection (${payload.source}) refund ${refund.id}`);
+    } catch (err) {
+      return res.status(500).json({ error: 'auto_refund_failed', message: (err as Error).message });
+    }
+  }
+
+  const alert = upsertAlert({
+    id: `alert_${Date.now()}`,
+    merchantId: merchant?.id || payload.merchantId,
+    disputeId: dispute?.id || payload.disputeId,
+    chargeId,
+    source: payload.source,
+    externalAlertId: payload.externalAlertId,
+    amount: payload.amount,
+    currency: payload.currency,
+    refunded: !!refundId,
+    refundId,
+    createdAt: new Date().toISOString(),
+  });
+
+  return res.json({ ok: true, deduplicated: false, alert });
+});
+
+app.get('/api/inquiries', (req, res) => {
+  const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
+  return res.json({ inquiries: listInquiries(merchantId) });
+});
+
+app.post('/api/inquiries', (req, res) => {
+  const schema = z.object({
+    id: z.string().min(1),
+    merchantId: z.string().optional(),
+    disputeId: z.string().optional(),
+    platform: z.enum(['paypal', 'klarna', 'afterpay', 'ebay', 'other']).default('other'),
+    customerMessage: z.string().optional(),
+  });
+
+  const parsed = schema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_inquiry', details: parsed.error.flatten() });
+
+  const p = parsed.data;
+  const inquiry = upsertInquiry({
+    id: p.id,
+    merchantId: p.merchantId,
+    disputeId: p.disputeId,
+    platform: p.platform,
+    status: 'new',
+    customerMessage: p.customerMessage,
+    responseDraft: p.customerMessage
+      ? `Thanks for reaching out. We reviewed your ${p.platform} inquiry and are gathering transaction, fulfillment, and support records now. We will update you shortly.`
+      : undefined,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  return res.json({ inquiry });
+});
+
+app.patch('/api/inquiries/:id', (req, res) => {
+  const schema = z.object({
+    status: z.enum(['new', 'responded', 'escalated', 'resolved']).optional(),
+    responseDraft: z.string().optional(),
+  });
+
+  const parsed = schema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_inquiry_patch', details: parsed.error.flatten() });
+
+  const existing = listInquiries().find((i) => i.id === req.params.id);
+  if (!existing) return res.status(404).json({ error: 'inquiry_not_found' });
+
+  const inquiry = upsertInquiry({ ...existing, ...parsed.data, updatedAt: new Date().toISOString() });
+  return res.json({ inquiry });
+});
+
+app.get('/api/pricing/estimate', (req, res) => {
+  const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
+  const merchant = merchantId ? findMerchantById(merchantId) : undefined;
+  const settings = merchant?.settings || defaultMerchantSettings();
+  const metrics = getMetrics(merchantId);
+
+  const recovered = metrics.recoveredAmount || 0;
+  const fee = Math.round(recovered * (settings.recoveryFeePct / 100));
+  const netRecovered = recovered - fee;
+  const roi = fee > 0 ? Number((recovered / fee).toFixed(2)) : 0;
+
+  return res.json({
+    pricing: {
+      recoveryFeePct: settings.recoveryFeePct,
+      alertDeflectionFeeCents: settings.alertDeflectionFeeCents,
+      roiGuaranteeMultiplier: settings.roiGuaranteeMultiplier,
+    },
+    performance: {
+      recoveredAmount: recovered,
+      estimatedFee: fee,
+      netRecovered,
+      roi,
+      roiGuaranteeMet: roi >= settings.roiGuaranteeMultiplier,
+    },
+  });
 });
 
 function getSubmissionReadiness(disputeId: string) {

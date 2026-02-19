@@ -10,7 +10,10 @@ A Stripe dispute automation MVP focused on chargeback recovery workflows.
 - Optional auto-submit based on score/rules (with manual review threshold)
 - Merchant portal UI (`/portal.html`) with KPIs, deadline risk tracking, dispute ratio alerts, retry-submit, and one-click deflection refund action
 - Stripe Connect OAuth flow for merchant account linking
-- Persistent local JSON storage (`data/db.json`) for merchants + disputes + submission attempts
+- Alerts ingestion pipeline with duplicate detection + optional auto-refund deflection
+- Inquiry queue endpoints (PayPal/Klarna/Afterpay/eBay) for early-stage dispute handling
+- Success-fee + ROI estimate endpoint for pay-on-recovery pricing model
+- Persistent local JSON storage (`data/db.json`) for merchants + disputes + alerts + inquiries + submission attempts
 
 ## Quick start
 
@@ -55,6 +58,12 @@ npm run dev
 - `GET /metrics?merchantId=<optional>`
 - `GET /recommendations?merchantId=<optional>`
 - `GET /api/disputes/queue?merchantId=<optional>` (prioritized open-dispute queue with readiness reasons)
+- `GET /api/alerts?merchantId=<optional>`
+- `POST /api/alerts/ingest` (dedupe + optional auto-refund)
+- `GET /api/inquiries?merchantId=<optional>`
+- `POST /api/inquiries`
+- `PATCH /api/inquiries/:id`
+- `GET /api/pricing/estimate?merchantId=<optional>`
 - `GET /auth/stripe/start?merchantName=...`
 - `GET /auth/stripe/callback`
 - `POST /webhooks/stripe`

@@ -13,6 +13,11 @@ export type MerchantSettings = {
   supportEmail: string;
   supportPhone: string;
   supportUrl: string;
+  recoveryFeePct: number;
+  alertDeflectionFeeCents: number;
+  roiGuaranteeMultiplier: number;
+  alertsAutoRefundEnabled: boolean;
+  inquiryAutomationEnabled: boolean;
 };
 
 export type EvidenceProfile = {
@@ -69,9 +74,38 @@ export type DisputeRecord = {
   internalNotes?: string;
 };
 
+export type AlertRecord = {
+  id: string;
+  merchantId?: string;
+  disputeId?: string;
+  chargeId?: string;
+  source: 'verifi' | 'ethoca' | 'network' | 'manual';
+  externalAlertId?: string;
+  amount?: number;
+  currency?: string;
+  refunded?: boolean;
+  refundId?: string;
+  duplicateOf?: string;
+  createdAt: string;
+};
+
+export type InquiryRecord = {
+  id: string;
+  merchantId?: string;
+  disputeId?: string;
+  platform: 'paypal' | 'klarna' | 'afterpay' | 'ebay' | 'other';
+  status: 'new' | 'responded' | 'escalated' | 'resolved';
+  customerMessage?: string;
+  responseDraft?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type DbShape = {
   merchants: MerchantRecord[];
   disputes: DisputeRecord[];
+  alerts: AlertRecord[];
+  inquiries: InquiryRecord[];
 };
 
 const dbPath = path.join(process.cwd(), 'data', 'db.json');
@@ -80,13 +114,19 @@ function ensureDb() {
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   if (!fs.existsSync(dbPath)) {
-    fs.writeFileSync(dbPath, JSON.stringify({ merchants: [], disputes: [] } as DbShape, null, 2));
+    fs.writeFileSync(dbPath, JSON.stringify({ merchants: [], disputes: [], alerts: [], inquiries: [] } as DbShape, null, 2));
   }
 }
 
 function readDb(): DbShape {
   ensureDb();
-  return JSON.parse(fs.readFileSync(dbPath, 'utf8')) as DbShape;
+  const parsed = JSON.parse(fs.readFileSync(dbPath, 'utf8')) as Partial<DbShape>;
+  return {
+    merchants: parsed.merchants || [],
+    disputes: parsed.disputes || [],
+    alerts: parsed.alerts || [],
+    inquiries: parsed.inquiries || [],
+  };
 }
 
 function writeDb(db: DbShape) {
@@ -107,6 +147,11 @@ export function defaultMerchantSettings(): MerchantSettings {
     supportEmail: '',
     supportPhone: '',
     supportUrl: '',
+    recoveryFeePct: 25,
+    alertDeflectionFeeCents: 2900,
+    roiGuaranteeMultiplier: 4,
+    alertsAutoRefundEnabled: true,
+    inquiryAutomationEnabled: true,
   };
 }
 
@@ -271,4 +316,43 @@ export function getMetrics(merchantId?: string) {
     monthlyDisputes,
     byReason,
   };
+}
+
+export function listAlerts(merchantId?: string) {
+  const db = readDb();
+  const items = merchantId ? db.alerts.filter((a) => a.merchantId === merchantId) : db.alerts;
+  return items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+export function upsertAlert(record: AlertRecord) {
+  const db = readDb();
+  const idx = db.alerts.findIndex((a) => a.id === record.id);
+  if (idx >= 0) db.alerts[idx] = { ...db.alerts[idx], ...record };
+  else db.alerts.push(record);
+  writeDb(db);
+  return record;
+}
+
+export function findAlertByExternal(source: AlertRecord['source'], externalAlertId?: string, chargeId?: string) {
+  const db = readDb();
+  return db.alerts.find(
+    (a) =>
+      (externalAlertId && a.externalAlertId && a.externalAlertId === externalAlertId && a.source === source) ||
+      (chargeId && a.chargeId && a.chargeId === chargeId && a.source === source),
+  );
+}
+
+export function listInquiries(merchantId?: string) {
+  const db = readDb();
+  const items = merchantId ? db.inquiries.filter((i) => i.merchantId === merchantId) : db.inquiries;
+  return items.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+}
+
+export function upsertInquiry(record: InquiryRecord) {
+  const db = readDb();
+  const idx = db.inquiries.findIndex((i) => i.id === record.id);
+  if (idx >= 0) db.inquiries[idx] = { ...db.inquiries[idx], ...record, updatedAt: new Date().toISOString() };
+  else db.inquiries.push(record);
+  writeDb(db);
+  return idx >= 0 ? db.inquiries[idx] : record;
 }
